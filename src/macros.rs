@@ -1,0 +1,93 @@
+#![allow(unused_macros)]
+
+macro_rules! register_u16_rw {
+    ($reg_name: ident, $reg_address : literal ) => {
+        #[repr(C)]
+        pub struct $reg_name {
+            r: RW<u16>,
+        }
+
+        impl $reg_name {
+            pub fn get() -> &'static mut $reg_name {
+                unsafe { &mut *($reg_address as *mut $reg_name) }
+            }
+            pub fn read(&mut self) -> u16 {
+                //core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+                let r = self.r.read();
+                //core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+                r
+            }
+            pub fn write(&mut self, bb: u16) {
+                //core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+                unsafe { self.r.write(bb) };
+                //core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+            }
+        }
+    };
+}
+
+macro_rules! busy_wait {
+    ($nb_expr:expr, $exit_cond:expr) => {{
+        loop {
+            let res = $nb_expr;
+            if res != Err(WouldBlock) {
+                break res;
+            }
+            if $exit_cond {
+                break res;
+            }
+        }
+    }};
+    ($nb_expr:expr) => {{
+        loop {
+            let res = $nb_expr;
+            if res != Err(WouldBlock) {
+                break res;
+            }
+        }
+    }};
+}
+
+macro_rules! busy_wait_cycles {
+    ($nb_expr:expr, $cycles:expr) => {{
+        let started = DWT::get_cycle_count();
+        let cycles = $cycles;
+        busy_wait!(
+            $nb_expr,
+            DWT::get_cycle_count().wrapping_sub(started) >= cycles
+        )
+    }};
+    ($cycles:expr) => {{
+        let started = crate::DWT::get_cycle_count();
+        let cycles = $cycles;
+        loop {
+            if crate::DWT::get_cycle_count().wrapping_sub(started) >= cycles {
+                break;
+            }
+        }
+    }};
+}
+
+
+macro_rules! bench_it {
+    ($myexpr:expr) => {{
+        let started = crate::DWT::get_cycle_count();
+        let r = $myexpr;
+        (r, crate::DWT::get_cycle_count().wrapping_sub(started))
+    }};
+}
+
+#[cfg(not(feature = "prod"))]
+macro_rules! println {
+    ($($arg:tt)*) => ({
+        use core::fmt::Write;
+        let mut output = jlink_rtt::NonBlockingOutput::new();
+        let _ = writeln!(&mut output, $($arg)*);
+    });
+}
+
+#[cfg(feature = "prod")]
+macro_rules! println {
+    ($($arg:tt)*) => ({
+    });
+}
