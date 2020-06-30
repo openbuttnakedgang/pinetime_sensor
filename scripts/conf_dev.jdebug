@@ -32,7 +32,7 @@ void OnProjectLoad (void) {
   // User settings
   //
 
-  File.Open ("$(ProjectDir)/../target/thumbv7em-none-eabi/debug/pt-hello");
+  File.Open ("$(ProjectDir)/../target/thumbv7em-none-eabihf/debug/pt-hello");
 }
 
 /*********************************************************************
