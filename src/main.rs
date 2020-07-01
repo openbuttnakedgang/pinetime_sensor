@@ -12,6 +12,9 @@ mod backlight;
 mod battery;
 mod delay;
 
+// модуль для датчика
+mod custom;
+
 use cortex_m::asm;
 use cortex_m_rt::entry;
 
@@ -67,40 +70,7 @@ fn main() -> ! {
     // Set up GPIO peripheral
     let gpio = hal::gpio::p0::Parts::new(P0);
     
-    //----------------------------- Sensor init ---------------------------------------
-    // up to 800 kHz
-    // 525nm green
-    trace!("sensor init starts");
-    // P0.06 : I²C SDA
-    let sda = gpio.p0_06.into_floating_input().degrade();
-    // P0.07 : I²C SCL
-    let scl = gpio.p0_07.into_floating_input().degrade();
-    // pins for TWIM0
-    let pins = twim::Pins { scl, sda };
-    // sensor instance
-    let mut sensor = Twim::new(TWIM0, pins, 
-        nrf52832_hal::target::twim0::frequency::FREQUENCY_A::K400);
-
-    //sensor setup
-    const sensor_addr: u8 = 0x44;
-    const BUFF_LEN: usize = 8;
-    let mut read_buff = [0_u8; BUFF_LEN];
-    let mut write_buff = [0_u8; BUFF_LEN];
-    match sensor.write_read(sensor_addr, &write_buff, &mut read_buff) {
-        core::result::Result::Err(err) => {
-            match err {
-                twim::Error::TxBufferTooLong => error!("TxBufferTooLong"),
-                twim::Error::RxBufferTooLong => error!("RxBufferTooLong"),
-                twim::Error::Transmit => error!("Transmit"),
-                twim::Error::Receive => error!("Receive"),
-                twim::Error::DMABufferNotInDataMemory => error!("DMABufferNotInDataMemory"),
-            }
-        },
-        core::result::Result::Ok(_) => trace!("Sent ok")
-    }    
-
-    trace!("sensor init ends");    
-    //----------------------------- Sensor init end---------------------------------------
+    let sensor = custom::PPG_Sensor::new(gpio, TWIM0);
 
     // Enable backlight
     let backlight = backlight::Backlight::init(
@@ -124,3 +94,4 @@ fn main() -> ! {
         asm::nop();
     }
 }
+
