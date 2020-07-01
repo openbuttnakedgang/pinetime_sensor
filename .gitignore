@@ -14,3 +14,4 @@ target/
 
 Docs/
 *.jdebug.user
+scripts/conf_dev.jdebug.user
