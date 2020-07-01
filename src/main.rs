@@ -32,7 +32,6 @@ use nrf52832_hal::{
     twim
 };
 
-
 #[entry]
 fn main() -> ! {
     emblog::init_with_level(log::Level::Trace).unwrap();
@@ -98,8 +97,7 @@ fn main() -> ! {
             }
         },
         core::result::Result::Ok(_) => trace!("Sent ok")
-    }
-    
+    }    
 
     trace!("sensor init ends");    
     //----------------------------- Sensor init end---------------------------------------
