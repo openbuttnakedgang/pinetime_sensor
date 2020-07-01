@@ -12,9 +12,6 @@ mod backlight;
 mod battery;
 mod delay;
 
-// модуль для датчика
-mod custom;
-
 use cortex_m::asm;
 use cortex_m_rt::entry;
 
@@ -34,6 +31,9 @@ use nrf52832_hal::{
     Twim,
     twim
 };
+
+// модуль для датчика
+mod custom;
 
 #[entry]
 fn main() -> ! {
@@ -71,6 +71,7 @@ fn main() -> ! {
     let gpio = hal::gpio::p0::Parts::new(P0);
     
     let sensor = custom::PPG_Sensor::new(gpio, TWIM0);
+    sensor.setup();
 
     // Enable backlight
     let backlight = backlight::Backlight::init(
