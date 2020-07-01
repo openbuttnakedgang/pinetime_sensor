@@ -13,3 +13,4 @@ target/
 !.vscode/extensions.json
 
 Docs/
+*.jdebug.user
