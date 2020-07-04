@@ -304,6 +304,14 @@ where
     sensor.init()?;
     info!("HRS3300 init successful!");
 
+    info!("HRS3300 adc wait time to 800ms:");
+    sensor.set_adc_wait_time(ADCWaitTime::Ms800)?;
+    info!("Ok");
+
+    info!("HRS3300 set gain to 8:");
+    sensor.set_gain(Gain::X8)?;
+    info!("Ok");
+
     info!("HRS3300 hrs activation:");
     sensor.set_hrs_active(true)?;
     info!("HRS3300 hrs activation successful!");
@@ -313,15 +321,30 @@ where
     info!("HRS3300 osc activation successful!");
 
     let count = 10;
-    for _ in 0..count {
+    for i in 0..count {
         info!("HRS3300 measure ch0 sample:");
         let value = sensor.get_ch0()?;
-        info!("HRS3300 ch0 sample {}", value);
+        info!("HRS3300 ch0 '{}' {}/{}", value, i, count);
 
         info!("HRS3300 measure ch1 sample:");
         let value = sensor.get_ch1()?;
-        info!("HRS3300 ch1 sample {}", value);
+        info!("HRS3300 ch1 '{}' {}/{}", value, i, count);
     }
+
+    // loop {
+    //     let value = sensor.get_ch0()?;
+    //     info!("\nch0 '{}'", value);
+    //     let value = sensor.get_ch1()?;
+    //     info!("ch1 '{}'", value);
+    // }
+
+    info!("HRS3300 osc deactivation:");
+    sensor.set_osc_active(false)?;
+    info!("Ok");
+
+    info!("HRS3300 sensor off:");
+    sensor.set_hrs_active(false)?;
+    info!("Ok");
 
     result::Result::<(), E>::Ok(())
 }
