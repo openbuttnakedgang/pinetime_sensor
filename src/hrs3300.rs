@@ -1,11 +1,6 @@
 // use nrf52832_hal::{ self as hal, twim, Twim };
 use embedded_hal::blocking::i2c;
-use core::{ 
-    result, 
-    // marker, 
-    // convert, 
-    ops::Range 
-};
+use core;
 
 const SENSOR_ADDR: u8 = 0x44;
 const BUFF_LEN: usize = 8;
@@ -25,7 +20,7 @@ pub enum RegAddrs {
 
 // bits 4:6, wait time between each conversion 
 pub enum ADCWaitTime {
-    Ms800,
+    Ms800 = 0,
     Ms400,
     Ms200,
     Ms100,
@@ -37,7 +32,7 @@ pub enum ADCWaitTime {
 
 // led current 2-bit value, bit 1 of 0:1
 pub enum LedCurrent {
-    Ma12_5,
+    Ma12_5 = 0,
     Ma20,
     Ma30,
     Ma40
@@ -45,7 +40,7 @@ pub enum LedCurrent {
 
 // ADC resolution
 pub enum BitsResolution {
-    _8,
+    _8 = 0,
     _9,
     _10,
     _11,
@@ -59,8 +54,9 @@ pub enum BitsResolution {
 }
 
 // gain
+#[derive(Clone, Copy, Debug)]
 pub enum Gain {
-    X1, 
+    X1 = 0, 
     X2,
     X4,
     X8,
@@ -68,204 +64,23 @@ pub enum Gain {
 }
 
 pub struct I2cDriver<I2C> {
-    i2c: I2C
+    i2c: I2C,
+    adc_wait_time_us : u32
 }
 
-impl <I2C, E> I2cDriver<I2C> 
+impl<I2C, E> I2cDriver<I2C> 
 where 
     I2C: i2c::Read<Error = E> + i2c::Write<Error = E> + i2c::WriteRead<Error = E>,
     E: core::fmt::Debug
 {
     pub fn new(i2c: I2C) -> Self {
         I2cDriver {
-            i2c
+            i2c,
+            adc_wait_time_us: 1250
         }
     }
 
-    fn reg_write(i2c: &mut I2C, sensor_reg_addr: RegAddrs, value: u8) -> result::Result<(), E> {
-        let mut buff = [0_u8, 1];
-        let tr = [sensor_reg_addr as u8, value];
-
-        i2c.write(SENSOR_ADDR, &tr)?;
-        i2c.write_read(SENSOR_ADDR, &tr[..1], &mut buff)?;  
-
-        println!("reg {:X} val {:X}", tr[0], buff[0]);
-        assert_eq!(tr[1], buff[0]);
-
-        result::Result::Ok(())
-    }
-    fn reg_read(i2c: &mut I2C, sensor_reg_addr: RegAddrs) -> result::Result<u8, E> {
-        let mut buff = [0_u8; 1];
-        let tr = [sensor_reg_addr as u8];
-
-        i2c.write_read(SENSOR_ADDR, &tr, &mut buff)?;
-
-        result::Result::Ok(buff[0])
-    }
-
-    pub fn get_id(&mut self) -> result::Result<u8, E> {
-        Self::reg_read(&mut self.i2c, RegAddrs::ENABLE)
-    }
-
-    pub fn set_hrs_active(&mut self, active: bool) -> result::Result<(), E> {
-        let mut reg_data = Self::reg_read(&mut self.i2c, RegAddrs::ENABLE)?; 
-
-        // bit 7 on/off 
-        if active { 
-            reg_data |= 1 << 7; 
-        } else { 
-            reg_data &= !(1 << 7); 
-        }
-
-        Self::reg_write(&mut self.i2c, RegAddrs::ENABLE, reg_data)
-    }
-
-    pub fn set_adc_wait_time(&mut self, wt: ADCWaitTime) -> result::Result<(), E> {
-        let mut reg_data = Self::reg_read(&mut self.i2c, RegAddrs::ENABLE)?;  
-
-        let value = match wt {
-            ADCWaitTime::Ms800  => 0 << 4,
-            ADCWaitTime::Ms400  => 1 << 4,
-            ADCWaitTime::Ms200  => 2 << 4,
-            ADCWaitTime::Ms100  => 3 << 4,
-            ADCWaitTime::Ms75   => 4 << 4,
-            ADCWaitTime::Ms50   => 5 << 4,
-            ADCWaitTime::Ms12_5 => 6 << 4,
-            ADCWaitTime::Ms0    => 7 << 4
-        };
-        // write to bits 4:6 of ENABLE
-        Self::set_bits(&mut reg_data, 4..6, value);
-
-        Self::reg_write(&mut self.i2c, RegAddrs::ENABLE, reg_data)
-    }
-
-    pub fn set_led_current(&mut self, lc: LedCurrent) -> result::Result<(), E> {
-        let value = match lc {
-            LedCurrent::Ma12_5  => 0, 
-            LedCurrent::Ma20    => 1, 
-            LedCurrent::Ma30    => 2,
-            LedCurrent::Ma40    => 3  
-        };
-
-        let mut enable_data = Self::reg_read(&mut self.i2c, RegAddrs::ENABLE)?; 
-        // extract bit 1 from lc and move it to 3
-        let to_enable: u8 = (value & 0b10) << 2;
-        // write to bit 3 of ENABLE
-        Self::set_bits(&mut enable_data, 3..3, to_enable);
-        Self::reg_write(&mut self.i2c, RegAddrs::ENABLE, enable_data)?;
-
-        let mut pdriver_data = Self::reg_read(&mut self.i2c, RegAddrs::PDRIVER)?; 
-        // extract bit 0 from lc and move it to 6
-        let to_pdriver: u8 = (value & 0b01) << 6;
-        // write to bit 6 of PDRIVER
-        Self::set_bits(&mut pdriver_data, 6..6, to_pdriver);        
-        Self::reg_write(&mut self.i2c, RegAddrs::PDRIVER, pdriver_data)
-    }
-
-    pub fn set_osc_active(&mut self, active: bool) -> result::Result<(), E> {
-        let mut reg_data = Self::reg_read(&mut self.i2c, RegAddrs::PDRIVER)?;  
-
-        // convert from bool to 5th bit
-        let value: u8 = if active {
-            1 << 5
-        } else {
-            0 << 5
-        };
-        // write to bit 5 of PDRIVER
-        Self::set_bits(&mut reg_data, 5..5, value);
-
-        Self::reg_write(&mut self.i2c, RegAddrs::PDRIVER, reg_data)
-    }
-
-    pub fn set_gain(&mut self, gain: Gain) -> result::Result<(), E> {
-        let mut reg_data = Self::reg_read(&mut self.i2c, RegAddrs::HGAIN)?;  
-
-        let value = match gain {
-            Gain::X1  => 0 << 2, 
-            Gain::X2  => 1 << 2, 
-            Gain::X4  => 2 << 2, 
-            Gain::X8  => 3 << 2, 
-            Gain::X64 => 4 << 2, 
-        };
-        // write to bit 4:2 of HGAIN
-        Self::set_bits(&mut reg_data, 2..4, value);
-
-        Self::reg_write(&mut self.i2c, RegAddrs::HGAIN, reg_data)
-    }
-
-    pub fn set_resolution(&mut self, res: BitsResolution) -> result::Result<(), E> {
-        let mut reg_data = Self::reg_read(&mut self.i2c, RegAddrs::RES)?;  
-
-        let value = match res {
-            BitsResolution::_8  => 0,
-            BitsResolution::_9  => 1,
-            BitsResolution::_10 => 2,
-            BitsResolution::_11 => 3,
-            BitsResolution::_12 => 4,
-            BitsResolution::_13 => 5,
-            BitsResolution::_14 => 6,
-            BitsResolution::_15 => 7,
-            BitsResolution::_16 => 8,
-            BitsResolution::_17 => 9,
-            BitsResolution::_18 => 10
-        };
-        // write to bits 3:0 of RES
-        Self::set_bits(&mut reg_data, 0..3, value);
-
-        Self::reg_write(&mut self.i2c, RegAddrs::RES, reg_data)
-    }
-
-    #[allow(non_snake_case)]
-    pub fn get_ch0(&mut self) -> result::Result<u32, E> {
-        let ch0_0x0F = Self::reg_read(&mut self.i2c, RegAddrs::C0DATAL)? as u8; 
-        let ch0_0x09 = Self::reg_read(&mut self.i2c, RegAddrs::C0DATAM)? as u8; 
-        let ch0_0x0A = Self::reg_read(&mut self.i2c, RegAddrs::C0DATAH)? as u8; 
-        
-        // 3:0 0x0F C0DATA[3:0] C0DATAL
-        let bits0_3: u32    = (ch0_0x0F & 0b0000_0111) as u32; 
-        // 3:0 0x0A C0DATA[7:4] C0DATAH
-        let bits4_7: u32    = (ch0_0x0A & 0b0000_0111) as u32; 
-        // 7:0 0x09 C0DATA[15:8] C0DATAM
-        let bits8_15: u32   = (ch0_0x09 & 0b1111_1111) as u32; 
-        // 5:4 0x0F C0DATA[17:16] C0DATAL
-        let bits16_17: u32  = (ch0_0x0F & 0b0011_0000) as u32; 
-
-        let value = bits0_3 | (bits4_7 << 4) | (bits8_15 << 8) | (bits16_17 << 16);
-
-        Ok(value)
-    }
-
-    #[allow(non_snake_case)]
-    pub fn get_ch1(&mut self) -> result::Result<u32, E> {
-        let ch0_0x0E = Self::reg_read(&mut self.i2c, RegAddrs::C1DATAL)? as u8; 
-        let ch0_0x08 = Self::reg_read(&mut self.i2c, RegAddrs::C1DATAM)? as u8; 
-        let ch0_0x0D = Self::reg_read(&mut self.i2c, RegAddrs::C1DATAH)? as u8; 
-        
-        // 2:0 0x0E C1DATA[2:0] C1DATAL
-        let bits0_2: u32    = (ch0_0x0E & 0b0000_0011) as u32; 
-        // 7:0 0x08 C1DATA[10:3] C1DATAM
-        let bits3_10: u32    = (ch0_0x08 & 0b1111_1111) as u32; 
-        // 6:0 0x0D C1DATA[17:11] C1DATAH
-        let bits11_17: u32   = (ch0_0x0D & 0b0111_1111) as u32; 
-
-        let value = bits0_2 | (bits3_10 << 4) | (bits11_17 << 8);
-
-        Ok(value)
-    }
-
-    fn set_bits(reg_data: &mut u8, bit_nums: Range<u8>, bits_in_byte: u8) {
-        // create bit mask
-        let mut mask = 0_u8;
-        for bit_num in bit_nums {
-            mask |= 1 << bit_num;
-        }
-        // clear bits by setting them to 0
-        *reg_data &= !mask;
-        // apply masked value
-        *reg_data |= bits_in_byte & mask;
-    }
-
-    pub fn init(&mut self) -> result::Result<(), E> {
+    pub fn init(&mut self) -> Result<(), E> {
         // recommended values
 
         // ENABLE = 0x68 => 
@@ -288,63 +103,184 @@ where
 
         Ok(())
     }
-}
-
-
-pub fn try_hrs3300<T, E> (sensor: &mut I2cDriver<T>) -> result::Result<(), E> 
-where
-    T:  i2c::Write::<Error = E> + 
-        i2c::Read::<Error = E> + 
-        i2c::WriteRead::<Error = E>,
-    E:  core::fmt::Debug
-{    
-    info!("HRS3300 usage starts");
-
-    info!("HRS3300 init:");
-    sensor.init()?;
-    info!("HRS3300 init successful!");
-
-    info!("HRS3300 adc wait time to 800ms:");
-    sensor.set_adc_wait_time(ADCWaitTime::Ms800)?;
-    info!("Ok");
-
-    info!("HRS3300 set gain to 8:");
-    sensor.set_gain(Gain::X8)?;
-    info!("Ok");
-
-    info!("HRS3300 hrs activation:");
-    sensor.set_hrs_active(true)?;
-    info!("HRS3300 hrs activation successful!");
-
-    info!("HRS3300 osc activation:");
-    sensor.set_osc_active(true)?;
-    info!("HRS3300 osc activation successful!");
-
-    let count = 10;
-    for i in 0..count {
-        info!("HRS3300 measure ch0 sample:");
-        let value = sensor.get_ch0()?;
-        info!("HRS3300 ch0 '{}' {}/{}", value, i, count);
-
-        info!("HRS3300 measure ch1 sample:");
-        let value = sensor.get_ch1()?;
-        info!("HRS3300 ch1 '{}' {}/{}", value, i, count);
+    
+    pub fn get_id(&mut self) -> Result<u8, E> {
+        self.reg_read(RegAddrs::ENABLE)
     }
 
-    // loop {
-    //     let value = sensor.get_ch0()?;
-    //     info!("\nch0 '{}'", value);
-    //     let value = sensor.get_ch1()?;
-    //     info!("ch1 '{}'", value);
-    // }
+    pub fn set_hrs_active(&mut self, active: bool) -> Result<(), E> {
+        let mut reg_data = self.reg_read(RegAddrs::ENABLE)?; 
 
-    info!("HRS3300 osc deactivation:");
-    sensor.set_osc_active(false)?;
-    info!("Ok");
+        let value: u8 = active as u8;
+        // bit 7 on/off 
+        Self::write_bits(value, &mut reg_data, 7, 1);
 
-    info!("HRS3300 sensor off:");
-    sensor.set_hrs_active(false)?;
-    info!("Ok");
+        self.reg_write(RegAddrs::ENABLE, reg_data)
+    }
 
-    result::Result::<(), E>::Ok(())
+    pub fn set_adc_wait_time(&mut self, wt: ADCWaitTime) -> Result<(), E> {
+        let mut reg_data = self.reg_read(RegAddrs::ENABLE)?;  
+
+        self.adc_wait_time_us = match wt {
+            ADCWaitTime::Ms800  => 800_000,
+            ADCWaitTime::Ms400  => 400_000,
+            ADCWaitTime::Ms200  => 200_000,
+            ADCWaitTime::Ms100  => 100_000,
+            ADCWaitTime::Ms75   => 75_000,
+            ADCWaitTime::Ms50   => 50_000,
+            ADCWaitTime::Ms12_5 => 1_250,
+            ADCWaitTime::Ms0    => 0,
+        };
+
+        let value = wt as u8;
+        // write to bits 4:6 of ENABLE
+        Self::write_bits(value, &mut reg_data, 4, 3);
+
+        self.reg_write(RegAddrs::ENABLE, reg_data)
+    }
+
+    pub fn get_adc_wait_time_us(&self) -> u32 {
+        self.adc_wait_time_us
+    }
+
+    pub fn set_led_current(&mut self, lc: LedCurrent) -> Result<(), E> {
+        let value = lc as u8;
+
+        let mut enable_data = self.reg_read( RegAddrs::ENABLE)?; 
+        // extract bit 1 from lc and move it to 3
+        let to_enable: u8 = value & 0b10;
+        // write to bit 3 of ENABLE
+        Self::write_bits(to_enable, &mut enable_data, 3, 1);
+        self.reg_write(RegAddrs::ENABLE, enable_data)?;
+
+        let mut pdriver_data = self.reg_read( RegAddrs::PDRIVER)?; 
+        // extract bit 0 from lc and move it to 6
+        let to_pdriver: u8 = (value & 0b01) << 6;
+        // write to bit 6 of PDRIVER
+        Self::write_bits(to_pdriver, &mut pdriver_data, 6, 1);        
+        self.reg_write( RegAddrs::PDRIVER, pdriver_data)
+    }
+
+    pub fn set_osc_active(&mut self, active: bool) -> Result<(), E> {
+        let mut reg_data = self.reg_read(RegAddrs::PDRIVER)?;  
+
+        let value: u8 = active as u8;
+        // // write to bit 5 of PDRIVER
+        Self::write_bits(value, &mut reg_data, 5, 1);
+
+        self.reg_write(RegAddrs::PDRIVER, reg_data)
+    }
+
+    pub fn set_gain(&mut self, gain: Gain) -> Result<(), E> {
+        let mut reg_data = self.reg_read(RegAddrs::HGAIN)?;  
+
+        let value = gain as u8;
+        // write to bit 4:2 of HGAIN
+        Self::write_bits(value, &mut reg_data, 2, 3);
+
+        self.reg_write(RegAddrs::HGAIN, reg_data)
+    }
+
+    pub fn set_resolution(&mut self, res: BitsResolution) -> Result<(), E> {
+        let mut reg_data = self.reg_read(RegAddrs::RES)?;  
+
+        let value = res as u8;
+        // write to bits 3:0 of RES
+        println!(">: {:0>8b}", reg_data);
+        Self::write_bits(value, &mut reg_data, 0, 4);
+        println!("<: {:0>8b}", reg_data);
+
+        self.reg_write(RegAddrs::RES, reg_data)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn get_ch0(&mut self) -> Result<u32, E> {
+        let ch0_0x0F = self.reg_read(RegAddrs::C0DATAL)? as u8; 
+        let ch0_0x09 = self.reg_read(RegAddrs::C0DATAM)? as u8; 
+        let ch0_0x0A = self.reg_read(RegAddrs::C0DATAH)? as u8; 
+        
+        let mut value: u32 = 0_u32;
+
+        // println!("0: {:0>8b}|{:0>8b}|{:0>8b}|{:0>8b}", ch0_0x0F, ch0_0x09, ch0_0x0A, ch0_0x0F);
+
+        // 3:0 0x0F C0DATA[3:0] C0DATAL
+        Self::extract_channel_bits(ch0_0x0F, 0, &mut value, 0, 4);
+
+        // 3:0 0x0A C0DATA[7:4] C0DATAH
+        Self::extract_channel_bits(ch0_0x0A, 0, &mut value, 4, 4);
+
+        // 7:0 0x09 C0DATA[15:8] C0DATAM
+        Self::extract_channel_bits(ch0_0x09, 0, &mut value, 8, 8);
+
+        // 5:4 0x0F C0DATA[17:16] C0DATAL
+        Self::extract_channel_bits(ch0_0x0F, 4, &mut value, 16, 2);
+
+        Ok(value)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn get_ch1(&mut self) -> Result<u32, E> {
+        let ch1_0x0E = self.reg_read(RegAddrs::C1DATAL)? as u8; 
+        let ch1_0x08 = self.reg_read(RegAddrs::C1DATAM)? as u8; 
+        let ch1_0x0D = self.reg_read(RegAddrs::C1DATAH)? as u8; 
+        
+        let mut value: u32 = 0_u32;
+
+        // println!("1: {:0>8b}|{:0>8b}|{:0>8b}", ch1_0x0D & 0b0111_1111, ch1_0x08, ch1_0x0E & 0b0000_0111);
+
+        // 2:0 0x0E C1DATA[2:0] C1DATAL
+        Self::extract_channel_bits(ch1_0x0E, 0, &mut value, 0, 3);
+        
+        // 7:0 0x08 C1DATA[10:3] C1DATAM
+        Self::extract_channel_bits(ch1_0x08, 0, &mut value, 3, 8);
+        
+        // 6:0 0x0D C1DATA[17:11] C1DATAH
+        Self::extract_channel_bits(ch1_0x0D, 0, &mut value, 11, 7);
+
+        Ok(value)
+    }
+
+    fn reg_write(&mut self, sensor_reg_addr: RegAddrs, value: u8) -> Result<(), E> {
+        let tr = [sensor_reg_addr as u8, value];
+
+        self.i2c.write(SENSOR_ADDR, &tr)?;
+
+        Ok(())
+    }
+
+    fn reg_read(&mut self, sensor_reg_addr: RegAddrs) -> Result<u8, E> {
+        let mut buff = [0_u8; 1];
+        let tr = [sensor_reg_addr as u8];
+
+        self.i2c.write_read(SENSOR_ADDR, &tr, &mut buff)?;
+
+        Ok(buff[0])
+    }
+
+    fn write_bits(mut from_right_aligned: u8, to: &mut u8, start_to: usize, count: usize) {
+        assert!(start_to + count <= 8);
+    
+        let mask: u8 = (1 << count) - 1;   // create mask with ones in places 0..n, where n = 'start_from'
+        from_right_aligned &= mask;        // extract bits from 'from'
+        *to &= !(mask << start_to);        // clear bits in 'to'
+    
+        from_right_aligned <<= start_to;   // shift prepared 'from' to align it with 'to'
+        *to |= from_right_aligned;         // put bits in 'to'
+    }
+    
+    fn extract_channel_bits(from: u8, start_from: usize, to: &mut u32, start_to: usize, count: usize) {
+        assert!(start_from + count <= 8);
+        assert!(start_to + count <= 32);
+    
+        let mut from = from as u32;
+    
+        from >>= start_from;              // align 'from' value to the right
+    
+        let mask: u32 = (1 << count) - 1; // create mask with ones in places 0..n, where n = 'start_from'
+        from &= mask;                     // extract bits from 'from'
+        *to &= !(mask << start_to);        // clear bits in 'to'
+    
+        from <<= start_to;                // shift prepared 'from' to align it with 'to'
+        *to |= from;                      // put bits in 'to'
+    }
 }
