@@ -39,7 +39,17 @@ use nrf52832_hal::{
 mod hrs3300;
 
 // display module
-mod ST7789;
+use embedded_graphics::{
+    style,
+    prelude::*,
+    pixelcolor,
+    primitives::rectangle,
+    fonts
+};
+use embedded_hal::digital::v2::OutputPin;
+const LCD_W: u16 = 240;
+const LCD_H: u16 = 240;
+const BACKGROUND_COLOR: pixelcolor::Rgb565 = pixelcolor::Rgb565::new(0, 0b000111, 0);
 
 #[entry]
 fn main() -> ! {
@@ -59,7 +69,7 @@ fn main() -> ! {
         SAADC: saadc_peripheral,
         // SPIM1,
         TIMER0: timer0_peripheral,
-        // TIMER1,
+        // TIMER1: timer1_peripheral,
         // TIMER2,
         TWIM0: twim0_peripheral,
         SPIM1: spim1_peripheral,
@@ -71,57 +81,57 @@ fn main() -> ! {
     // needed for Bluetooth to work.
     let _clocks = hal::clocks::Clocks::new(clock_peripheral).enable_ext_hfosc();
 
-    // Set up delay provider on TIMER0
-    let mut delay_provider = delay::TimerDelay::new(timer0_peripheral);
 
     // Set up GPIO peripheral
-    let gpio_peripheral = hal::gpio::p0::Parts::new(p0_peripheral);
+    let gpio = hal::gpio::p0::Parts::new(p0_peripheral);
     
     let mut sensor;
     {
         // P0.06 : I²C SDA
-        let sda = gpio_peripheral.p0_06.into_floating_input().degrade();
+        let sda = gpio.p0_06.into_floating_input().degrade();
         // P0.07 : I²C SCL
-        let scl = gpio_peripheral.p0_07.into_floating_input().degrade();
+        let scl = gpio.p0_07.into_floating_input().degrade();
         // pins for TWIM0
         let pins = twim::Pins { scl, sda };    
         let twim_driver = Twim::new(twim0_peripheral, pins, frequency::FREQUENCY_A::K400);
         sensor = hrs3300::I2cDriver::new(twim_driver);
-    }    
-    match try_hrs3300(&mut sensor, &mut delay_provider) {
-        Result::Err(err) => {
-            match err {
-                twim::Error::TxBufferTooLong => error!("\tTxBufferTooLong\n"),
-                twim::Error::RxBufferTooLong => error!("\tRxBufferTooLong\n"),
-                twim::Error::Transmit => error!("\tTransmit\n"),
-                twim::Error::Receive => error!("\tReceive\n"),
-                twim::Error::DMABufferNotInDataMemory => error!("\tDMABufferNotInDataMemory\n"),
-            }
-        },
-        Result::Ok(_) => info!("HRS3300 usage successful!")
-    }
+    }   
 
     // Enable backlight
     let backlight = backlight::Backlight::init(
-        gpio_peripheral.p0_14.into_push_pull_output(Level::High).degrade(),
-        gpio_peripheral.p0_22.into_push_pull_output(Level::High).degrade(),
-        gpio_peripheral.p0_23.into_push_pull_output(Level::High).degrade(),
+        gpio.p0_14.into_push_pull_output(Level::High).degrade(),
+        gpio.p0_22.into_push_pull_output(Level::High).degrade(),
+        gpio.p0_23.into_push_pull_output(Level::High).degrade(),
         1,
     );
 
     let mut display_driver;
     {
-        let spi_clk = gpio_peripheral.p0_02
+        // Set up SPI pins
+        let spi_clk = gpio.p0_02
             .into_push_pull_output(Level::Low).degrade();
-        let spi_mosi = gpio_peripheral.p0_03
+        let spi_mosi = gpio.p0_03
             .into_push_pull_output(Level::Low).degrade();
-        let spi_miso = gpio_peripheral.p0_04
+        let spi_miso = gpio.p0_04
             .into_floating_input().degrade();
         let spi_pins = spim::Pins {
             sck: spi_clk,
             miso: Some(spi_miso),
             mosi: Some(spi_mosi)
         };
+
+        // Set up LCD pins
+        // LCD_RS - data/clock pin      (P0.18) 	Clock/data pin (CD)
+        let lcd_data_clock = gpio.p0_18
+            .into_push_pull_output(Level::Low);
+        // LCD_CS - chip select         (P0.25) 	Chip select
+        let mut lcd_chip_select = gpio.p0_25
+            .into_push_pull_output(Level::Low);
+        // LCD_RESET - reset            (P0.26) 	Display reset
+        let lcd_reset = gpio.p0_26
+            .into_push_pull_output(Level::Low);
+
+        // Initialize SPI
         let spi_interface = spim::Spim::new(
             spim1_peripheral, 
             spi_pins, 
@@ -131,22 +141,79 @@ fn main() -> ! {
             // SPI must be used in mode 3. Mode 0 (the default) won't work.
             spim::MODE_3, 
             0);
-        display_driver = ST7789::SPI_Driver::new(spi_interface);
+
+        // Chip select must be held low while driving the display. It must be high
+        // when using other SPI devices on the same bus (such as external flash
+        // storage) so that the display controller won't respond to the wrong
+        // commands.
+
+        lcd_chip_select.set_low().unwrap();
+
+        // Set up delay provider on TIMER0
+        let delay_provider = delay::TimerDelay::new(timer0_peripheral);
+        
+        // Initialize LCD
+        display_driver = st7789::ST7789::new(
+            spi_interface, 
+            lcd_data_clock, lcd_reset, 
+            LCD_W, LCD_H, delay_provider);
+
+        display_driver.init().unwrap();
+        display_driver.set_orientation(&st7789::Orientation::Portrait).unwrap();
+
+        // Draw something onto the LCD
+        let backdrop_style = style::PrimitiveStyleBuilder::new()
+            .fill_color(BACKGROUND_COLOR)
+            .build();
+        rectangle::Rectangle::new(
+            Point::new(0, 0), 
+            Point::new(LCD_W as i32, LCD_H as i32)
+        )
+            .into_styled(backdrop_style)
+            .draw(&mut display_driver)
+            .unwrap();
+
+        // Choose text style
+        let text_style = style::TextStyleBuilder::new(fonts::Font12x16)
+            .text_color(pixelcolor::Rgb565::WHITE)
+            .background_color(BACKGROUND_COLOR);
+
+        // Draw text
+        fonts::Text::new("PineTime", Point::new(10, 10))
+            .into_styled(text_style.build())
+            .draw(&mut display_driver)
+            .unwrap();
     }
 
     // Battery status
     let battery = battery::BatteryStatus::init(
-        gpio_peripheral.p0_12.into_floating_input(),
-        gpio_peripheral.p0_31.into_floating_input(),
+        gpio.p0_12.into_floating_input(),
+        gpio.p0_31.into_floating_input(),
         saadc_peripheral,
-    );
+    ); 
+
+
+    // // Set up delay provider on TIMER0
+    // let mut delay_provider = delay::TimerDelay::new(timer1_peripheral);
+    // match try_hrs3300(&mut sensor, &mut delay_provider) {
+    //     Result::Err(err) => {
+    //         match err {
+    //             twim::Error::TxBufferTooLong => error!("\tTxBufferTooLong\n"),
+    //             twim::Error::RxBufferTooLong => error!("\tRxBufferTooLong\n"),
+    //             twim::Error::Transmit => error!("\tTransmit\n"),
+    //             twim::Error::Receive => error!("\tReceive\n"),
+    //             twim::Error::DMABufferNotInDataMemory => error!("\tDMABufferNotInDataMemory\n"),
+    //         }
+    //     },
+    //     Result::Ok(_) => info!("HRS3300 usage successful!")
+    // }
     
     loop {
         asm::wfi();
     }
 }
 
-pub fn try_hrs3300<T, E> (
+fn try_hrs3300<T, E> (
     sensor: &mut hrs3300::I2cDriver<T>, 
     delay_provider: &mut delay::TimerDelay) -> Result<(), E> 
 where
