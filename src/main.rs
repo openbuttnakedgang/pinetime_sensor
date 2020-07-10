@@ -50,6 +50,7 @@ use embedded_hal::digital::v2::OutputPin;
 const LCD_W: u16 = 240;
 const LCD_H: u16 = 240;
 const BACKGROUND_COLOR: pixelcolor::Rgb565 = pixelcolor::Rgb565::new(0, 0b000111, 0);
+const MARGIN: u16 = 10;
 
 #[entry]
 fn main() -> ! {
@@ -151,7 +152,6 @@ fn main() -> ! {
 
         // Set up delay provider on TIMER0
         let delay_provider = delay::TimerDelay::new(timer0_peripheral);
-        
         // Initialize LCD
         display_driver = st7789::ST7789::new(
             spi_interface, 
@@ -179,7 +179,13 @@ fn main() -> ! {
             .background_color(BACKGROUND_COLOR);
 
         // Draw text
-        fonts::Text::new("PineTime", Point::new(10, 10))
+        fonts::Text::new("HRS data ...", Point::new(10, 10))
+            .into_styled(text_style.build())
+            .draw(&mut display_driver)
+            .unwrap();
+
+        // Draw text
+        fonts::Text::new("20%", Point::new(10, 10 + 16 + MARGIN as i32))
             .into_styled(text_style.build())
             .draw(&mut display_driver)
             .unwrap();
@@ -191,7 +197,6 @@ fn main() -> ! {
         gpio.p0_31.into_floating_input(),
         saadc_peripheral,
     ); 
-
 
     // // Set up delay provider on TIMER0
     // let mut delay_provider = delay::TimerDelay::new(timer1_peripheral);
