@@ -281,7 +281,17 @@ where
     info!("HRS3300 osc deactivation:");
     sensor.set_osc_active(false)?;
 
-    info!("HRS3300 sensor off:");
+    info!("HRS3300 sensorait time
+    000:wait time between each conversion cycle is 800 ms
+    001:wait time between each conversion cycle is 400 ms
+    010:wait time between each conversion cycle is 200 ms
+    6:4
+    HWT
+    011:wait time between each conversion cycle is 100 ms
+    100:wait time between each conversion cycle is 75 ms
+    101:wait time between each conversion cycle is 50 ms
+    110:wait time between each conversion cycle is 12.5 ms
+    111:wait off:");
     sensor.set_hrs_active(false)?;
 
     Ok(())
