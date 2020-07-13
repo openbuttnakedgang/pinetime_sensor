@@ -30,27 +30,18 @@ use nrf52832_hal::{
     pac,
     Twim,
     twim,
-    spim,
     gpio,
     target::twim0::frequency
 };
 
 // sensor module
+use embedded_hal::blocking::delay::DelayUs;
 mod hrs3300;
-
-// display module
-use embedded_graphics::{
-    style,
-    prelude::*,
-    pixelcolor,
-    primitives::rectangle,
-    fonts
-};
-use embedded_hal::digital::v2::OutputPin;
-const LCD_W: u16 = 240;
-const LCD_H: u16 = 240;
-const BACKGROUND_COLOR: pixelcolor::Rgb565 = pixelcolor::Rgb565::new(0, 0b000111, 0);
-const MARGIN: u16 = 10;
+mod hrs3300_examle;
+use core::sync::atomic;
+static GLOBAL_ALS: atomic::AtomicU32 = atomic::AtomicU32::new(0_u32);
+static GLOBAL_HRS: atomic::AtomicU32 = atomic::AtomicU32::new(0_u32);
+static GLOBAL_SUM: atomic::AtomicU32 = atomic::AtomicU32::new(0_u32);
 
 #[entry]
 fn main() -> ! {
@@ -96,6 +87,7 @@ fn main() -> ! {
         let pins = twim::Pins { scl, sda };    
         let twim_driver = Twim::new(twim0_peripheral, pins, frequency::FREQUENCY_A::K400);
         sensor = hrs3300::I2cDriver::new(twim_driver);
+        // sensor = hrs3300_examle::HRS3300::default(twim_driver);
     }   
 
     // Enable backlight
@@ -106,91 +98,6 @@ fn main() -> ! {
         1,
     );
 
-    // let mut display_driver;
-    // {
-    //     // Set up SPI pins
-    //     let spi_clk = gpio.p0_02
-    //         .into_push_pull_output(Level::Low).degrade();
-    //     let spi_mosi = gpio.p0_03
-    //         .into_push_pull_output(Level::Low).degrade();
-    //     let spi_miso = gpio.p0_04
-    //         .into_floating_input().degrade();
-    //     let spi_pins = spim::Pins {
-    //         sck: spi_clk,
-    //         miso: Some(spi_miso),
-    //         mosi: Some(spi_mosi)
-    //     };
-
-    //     // Set up LCD pins
-    //     // LCD_RS - data/clock pin      (P0.18) 	Clock/data pin (CD)
-    //     let lcd_data_clock = gpio.p0_18
-    //         .into_push_pull_output(Level::Low);
-    //     // LCD_CS - chip select         (P0.25) 	Chip select
-    //     let mut lcd_chip_select = gpio.p0_25
-    //         .into_push_pull_output(Level::Low);
-    //     // LCD_RESET - reset            (P0.26) 	Display reset
-    //     let lcd_reset = gpio.p0_26
-    //         .into_push_pull_output(Level::Low);
-
-    //     // Initialize SPI
-    //     let spi_interface = spim::Spim::new(
-    //         spim1_peripheral, 
-    //         spi_pins, 
-    //         // Use SPI at 8MHz (the fastest clock available on the nRF52832)
-    //         // because otherwise refreshing will be super slow.
-    //         spim::Frequency::M8, 
-    //         // SPI must be used in mode 3. Mode 0 (the default) won't work.
-    //         spim::MODE_3, 
-    //         0);
-
-    //     // Chip select must be held low while driving the display. It must be high
-    //     // when using other SPI devices on the same bus (such as external flash
-    //     // storage) so that the display controller won't respond to the wrong
-    //     // commands.
-
-    //     lcd_chip_select.set_low().unwrap();
-
-    //     // Set up delay provider on TIMER0
-    //     let delay_provider = delay::TimerDelay::new(timer0_peripheral);
-    //     // Initialize LCD
-    //     display_driver = st7789::ST7789::new(
-    //         spi_interface, 
-    //         lcd_data_clock, lcd_reset, 
-    //         LCD_W, LCD_H, delay_provider);
-
-    //     display_driver.init().unwrap();
-    //     display_driver.set_orientation(&st7789::Orientation::Portrait).unwrap();
-
-    //     // Draw something onto the LCD
-    //     let backdrop_style = style::PrimitiveStyleBuilder::new()
-    //         .fill_color(BACKGROUND_COLOR)
-    //         .build();
-    //     rectangle::Rectangle::new(
-    //         Point::new(0, 0), 
-    //         Point::new(LCD_W as i32, LCD_H as i32)
-    //     )
-    //         .into_styled(backdrop_style)
-    //         .draw(&mut display_driver)
-    //         .unwrap();
-
-    //     // Choose text style
-    //     let text_style = style::TextStyleBuilder::new(fonts::Font12x16)
-    //         .text_color(pixelcolor::Rgb565::WHITE)
-    //         .background_color(BACKGROUND_COLOR);
-
-    //     // Draw text
-    //     fonts::Text::new("HRS data ...", Point::new(10, 10))
-    //         .into_styled(text_style.build())
-    //         .draw(&mut display_driver)
-    //         .unwrap();
-
-    //     // Draw text
-    //     fonts::Text::new("20%", Point::new(10, 10 + 16 + MARGIN as i32))
-    //         .into_styled(text_style.build())
-    //         .draw(&mut display_driver)
-    //         .unwrap();
-    // }
-
     // Battery status
     let battery = battery::BatteryStatus::init(
         gpio.p0_12.into_floating_input(),
@@ -200,7 +107,10 @@ fn main() -> ! {
 
     // Set up delay provider on TIMER0
     let mut delay_provider = delay::TimerDelay::new(timer0_peripheral);
-    match try_hrs3300(&mut sensor, &mut delay_provider) {
+    match 
+        // try_hrs_example(&mut sensor, &mut delay_provider) 
+        try_hrs3300(&mut sensor, &mut delay_provider) 
+    {
         Result::Err(err) => {
             match err {
                 twim::Error::TxBufferTooLong => error!("\tTxBufferTooLong\n"),
@@ -226,14 +136,14 @@ where
         embedded_hal::blocking::i2c::Read::<Error = E> + 
         embedded_hal::blocking::i2c::WriteRead::<Error = E>,
     E:  core::fmt::Debug
-{    
+{       
     info!("HRS3300 usage starts");
 
     sensor.init()?;
 
-    sensor.set_adc_wait_time(hrs3300::ADCWaitTime::Ms100)?;
+    sensor.set_adc_wait_time(hrs3300::ADCWaitTime::Ms12_5)?;
 
-    sensor.set_gain(hrs3300::Gain::X8)?;
+    sensor.set_gain(hrs3300::Gain::X4)?;
 
     sensor.set_resolution(hrs3300::BitsResolution::_18)?;
 
@@ -241,48 +151,65 @@ where
 
     sensor.set_osc_active(true)?;
 
-    let gains = [
-        hrs3300::Gain::X1,
-        hrs3300::Gain::X2,
-        hrs3300::Gain::X4,
-        hrs3300::Gain::X8,
-        hrs3300::Gain::X64,
-    ];
+    let mut hrs: u32;
+    let mut als: u32;
+    let mut sum: u32;
+    
+    for _ in 0..1000000 {
+        hrs = sensor.get_ch0_hrs().unwrap();
+        als = sensor.get_ch1_als().unwrap();
+        sum = hrs.saturating_sub(als) as u32;
 
-    for gain in gains.iter() {
-        sensor.set_gain(*gain)?;
-
-        let mut sum0 = 0_u32;
-        let mut sum1 = 0_u32;
-
-        let count = 1000_usize;
-        for _ in 0..count {
-            sum0 += sensor.get_ch0()?;
-            sum1 += sensor.get_ch1()?;
-        }
-
-        println!("g: {:?}, 0: {}, 1: {}", gain, sum0 / count as u32, sum1 / count as u32);
+        GLOBAL_HRS.store(hrs, atomic::Ordering::Relaxed);
+        GLOBAL_ALS.store(als,  atomic::Ordering::Relaxed);
+        GLOBAL_SUM.store(sum, atomic::Ordering::Relaxed);
+            
+        delay_provider.delay_us(sensor.get_adc_wait_time_us());
     }
-
-    // let mut values = [(0_u32, 0_u32); 20];
-
-    // for value in values.iter_mut() {
-    //     value.0 = sensor.get_ch0()?;
-    //     value.1 = sensor.get_ch1()?;
-    //     delay_provider.delay_us(sensor.get_adc_wait_time_us());
-    // }
-
-    // println!("__");
-    // for value in values.iter() {
-    //     println!("{:?}", value);
-    // }
-    // println!("__");
 
     info!("HRS3300 osc deactivation:");
     sensor.set_osc_active(false)?;
 
     info!("HRS3300 sensor off:");
     sensor.set_hrs_active(false)?;
+
+    Ok(())
+}
+
+#[allow(unused)]
+fn try_hrs_example<T, CommE> (
+    sensor: &mut hrs3300_examle::HRS3300<T>, 
+    delay_provider: &mut delay::TimerDelay) -> Result<(), CommE> 
+where
+    T:  embedded_hal::blocking::i2c::Write::<Error = CommE> + 
+        embedded_hal::blocking::i2c::Read::<Error = CommE> + 
+        embedded_hal::blocking::i2c::WriteRead::<Error = CommE>,
+    CommE:  core::fmt::Debug
+{
+    info!("HRS3300 usage starts");
+
+    sensor.init().unwrap();
+
+    let mut valid_samples = 0;
+    for _ in 0..1000 {
+        if let Ok((c0data, c1data)) = sensor.read_raw_sample() {
+            println!("{}, {}", c0data, c1data);
+
+            GLOBAL_HRS.store(
+                c0data, 
+                atomic::Ordering::Relaxed);
+            GLOBAL_ALS.store(
+                c1data, 
+                atomic::Ordering::Relaxed);
+
+            valid_samples += 1;
+        }
+            
+        delay_provider.delay_us(50_u32);
+    }
+
+    println!("{}/1000 valid samples", valid_samples);
+    info!("All!");
 
     Ok(())
 }

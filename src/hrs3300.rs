@@ -3,7 +3,7 @@ use embedded_hal::blocking::i2c;
 use core;
 
 const SENSOR_ADDR: u8 = 0x44;
-const BUFF_LEN: usize = 8;
+#[allow(unused)]
 pub enum RegAddrs {
     ID = 0x00,      // R/W Device ID 0x21
     ENABLE = 0x01,  // R/W Enable HRS 0x68
@@ -19,6 +19,7 @@ pub enum RegAddrs {
 }
 
 // bits 4:6, wait time between each conversion 
+#[allow(unused)]
 pub enum ADCWaitTime {
     Ms800 = 0,
     Ms400,
@@ -31,6 +32,7 @@ pub enum ADCWaitTime {
 }
 
 // led current 2-bit value, bit 1 of 0:1
+#[allow(unused)]
 pub enum LedCurrent {
     Ma12_5 = 0,
     Ma20,
@@ -54,7 +56,7 @@ pub enum BitsResolution {
 }
 
 // gain
-#[derive(Clone, Copy, Debug)]
+#[allow(unused)]
 pub enum Gain {
     X1 = 0, 
     X2,
@@ -104,6 +106,7 @@ where
         Ok(())
     }
     
+    #[allow(unused)]
     pub fn get_id(&mut self) -> Result<u8, E> {
         self.reg_read(RegAddrs::ENABLE)
     }
@@ -194,7 +197,7 @@ where
     }
 
     #[allow(non_snake_case)]
-    pub fn get_ch0(&mut self) -> Result<u32, E> {
+    pub fn get_ch0_hrs(&mut self) -> Result<u32, E> {
         let ch0_0x0F = self.reg_read(RegAddrs::C0DATAL)? as u8; 
         let ch0_0x09 = self.reg_read(RegAddrs::C0DATAM)? as u8; 
         let ch0_0x0A = self.reg_read(RegAddrs::C0DATAH)? as u8; 
@@ -219,7 +222,7 @@ where
     }
 
     #[allow(non_snake_case)]
-    pub fn get_ch1(&mut self) -> Result<u32, E> {
+    pub fn get_ch1_als(&mut self) -> Result<u32, E> {
         let ch1_0x0E = self.reg_read(RegAddrs::C1DATAL)? as u8; 
         let ch1_0x08 = self.reg_read(RegAddrs::C1DATAM)? as u8; 
         let ch1_0x0D = self.reg_read(RegAddrs::C1DATAH)? as u8; 
