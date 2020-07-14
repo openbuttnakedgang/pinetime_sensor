@@ -1,73 +1,15 @@
-// use nrf52832_hal::{ self as hal, twim, Twim };
 use embedded_hal::blocking::i2c;
 use core;
 
-const SENSOR_ADDR: u8 = 0x44;
+pub const SENSOR_ADDR: u8 = 0x44;
 #[allow(unused)]
-pub enum RegAddrs {
-    ID = 0x00,      // R/W Device ID 0x21
-    ENABLE = 0x01,  // R/W Enable HRS 0x68
-    C1DATAM = 0x08, // RO CH1 data register bit 10~3 0x00
-    C0DATAM = 0x09, // RO CH0 data register bit 15~8 0x00
-    C0DATAH = 0x0A, // RO CH0 data register bit 7~4 0x00
-    PDRIVER = 0x0C, // R/W HRS LED driver/PON/PDRIVE[0] 0x68
-    C1DATAH = 0x0D, // RO CH1 data register bit 17~11 0x00
-    C1DATAL = 0x0E, // RO CH1 data register bit 2~0 0x00
-    C0DATAL = 0x0F, // RO CH1 data register bit 17~16 and 3~0 0x00
-    RES = 0x16,     // R/W ALS and HRS resolution 0x66
-    HGAIN = 0x17    // R/W HRS gain 0x10
-}
-
-// bits 4:6, wait time between each conversion 
-#[allow(unused)]
-pub enum ADCWaitTime {
-    Ms800 = 0,
-    Ms400,
-    Ms200,
-    Ms100,
-    Ms75,
-    Ms50,
-    Ms12_5,
-    Ms0
-}
-
-// led current 2-bit value, bit 1 of 0:1
-#[allow(unused)]
-pub enum LedCurrent {
-    Ma12_5 = 0,
-    Ma20,
-    Ma30,
-    Ma40
-}
-
-// ADC resolution
-pub enum BitsResolution {
-    _8 = 0,
-    _9,
-    _10,
-    _11,
-    _12,
-    _13,
-    _14,
-    _15,
-    _16,
-    _17,
-    _18
-}
-
-// gain
-#[allow(unused)]
-pub enum Gain {
-    X1 = 0, 
-    X2,
-    X4,
-    X8,
-    X64
-}
+pub const DEVICE_ID: u8 = 0x21;
+const SAMPLE_BLOCK_LEN: usize = 7;
 
 pub struct I2cDriver<I2C> {
     i2c: I2C,
-    adc_wait_time_us : u32
+    adc_wait_time_us: u32,
+    resolution_mask: u32
 }
 
 impl<I2C, E> I2cDriver<I2C> 
@@ -78,7 +20,8 @@ where
     pub fn new(i2c: I2C) -> Self {
         I2cDriver {
             i2c,
-            adc_wait_time_us: 1250
+            adc_wait_time_us: 1250,
+            resolution_mask: (1 << 15) - 1
         }
     }
 
@@ -124,16 +67,7 @@ where
     pub fn set_adc_wait_time(&mut self, wt: ADCWaitTime) -> Result<(), E> {
         let mut reg_data = self.reg_read(RegAddrs::ENABLE)?;  
 
-        self.adc_wait_time_us = match wt {
-            ADCWaitTime::Ms800  => 800_000,
-            ADCWaitTime::Ms400  => 400_000,
-            ADCWaitTime::Ms200  => 200_000,
-            ADCWaitTime::Ms100  => 100_000,
-            ADCWaitTime::Ms75   => 75_000,
-            ADCWaitTime::Ms50   => 50_000,
-            ADCWaitTime::Ms12_5 => 1_250,
-            ADCWaitTime::Ms0    => 0,
-        };
+        self.adc_wait_time_us = wt.get_us();
 
         let value = wt as u8;
         // write to bits 4:6 of ENABLE
@@ -189,59 +123,59 @@ where
 
         let value = res as u8;
         // write to bits 3:0 of RES
-        println!(">: {:0>8b}", reg_data);
         Self::write_bits(value, &mut reg_data, 0, 4);
-        println!("<: {:0>8b}", reg_data);
+
+        self.resolution_mask = res.get_mask();
 
         self.reg_write(RegAddrs::RES, reg_data)
     }
 
-    #[allow(non_snake_case)]
-    pub fn get_ch0_hrs(&mut self) -> Result<u32, E> {
-        let ch0_0x0F = self.reg_read(RegAddrs::C0DATAL)? as u8; 
-        let ch0_0x09 = self.reg_read(RegAddrs::C0DATAM)? as u8; 
-        let ch0_0x0A = self.reg_read(RegAddrs::C0DATAH)? as u8; 
-        
-        let mut value: u32 = 0_u32;
 
-        // println!("0: {:0>8b}|{:0>8b}|{:0>8b}|{:0>8b}", ch0_0x0F, ch0_0x09, ch0_0x0A, ch0_0x0F);
-
-        // 3:0 0x0F C0DATA[3:0] C0DATAL
-        Self::extract_channel_bits(ch0_0x0F, 0, &mut value, 0, 4);
-
-        // 3:0 0x0A C0DATA[7:4] C0DATAH
-        Self::extract_channel_bits(ch0_0x0A, 0, &mut value, 4, 4);
-
-        // 7:0 0x09 C0DATA[15:8] C0DATAM
-        Self::extract_channel_bits(ch0_0x09, 0, &mut value, 8, 8);
-
-        // 5:4 0x0F C0DATA[17:16] C0DATAL
-        Self::extract_channel_bits(ch0_0x0F, 4, &mut value, 16, 2);
-
-        Ok(value)
-    }
 
     #[allow(non_snake_case)]
-    pub fn get_ch1_als(&mut self) -> Result<u32, E> {
-        let ch1_0x0E = self.reg_read(RegAddrs::C1DATAL)? as u8; 
-        let ch1_0x08 = self.reg_read(RegAddrs::C1DATAM)? as u8; 
-        let ch1_0x0D = self.reg_read(RegAddrs::C1DATAH)? as u8; 
+    pub fn read_raw_sample(&mut self) -> Result<RawSample, E>{
+        let mut sample_buff = [0u8; SAMPLE_BLOCK_LEN];
+        self.read_registers(RegAddrs::C1DATAM, &mut sample_buff)?;
+
+        // The order of returned data is:
+        // 0: C1DATAM 0x08
+        // 1: C0DATAM 0x09
+        // 2: C0DATAH 0x0A
+        // 3: PDRIVER
+        // 4: C1DATAH 0x0D
+        // 5: C1DATAL 0x0E
+        // 6: C0DATAL 0x0F
+        let ch1_0x08 = sample_buff[0]; 
+        let ch0_0x09 = sample_buff[1]; 
+        let ch0_0x0A = sample_buff[2];         
+        let ch1_0x0D = sample_buff[4]; 
+        let ch1_0x0E = sample_buff[5]; 
+        let ch0_0x0F = sample_buff[6]; 
         
-        let mut value: u32 = 0_u32;
-
-        // println!("1: {:0>8b}|{:0>8b}|{:0>8b}", ch1_0x0D & 0b0111_1111, ch1_0x08, ch1_0x0E & 0b0000_0111);
-
+        let mut als: AlsValue = 0_u32;
         // 2:0 0x0E C1DATA[2:0] C1DATAL
-        Self::extract_channel_bits(ch1_0x0E, 0, &mut value, 0, 3);
-        
+        Self::extract_channel_bits(ch1_0x0E, 0, &mut als, 0, 3);        
         // 7:0 0x08 C1DATA[10:3] C1DATAM
-        Self::extract_channel_bits(ch1_0x08, 0, &mut value, 3, 8);
-        
+        Self::extract_channel_bits(ch1_0x08, 0, &mut als, 3, 8);        
         // 6:0 0x0D C1DATA[17:11] C1DATAH
-        Self::extract_channel_bits(ch1_0x0D, 0, &mut value, 11, 7);
+        Self::extract_channel_bits(ch1_0x0D, 0, &mut als, 11, 7);
+        als &= self.resolution_mask;
 
-        Ok(value)
+        let mut hrs: HrsValue = 0_u32;
+        // 3:0 0x0F C0DATA[3:0] C0DATAL
+        Self::extract_channel_bits(ch0_0x0F, 0, &mut hrs, 0, 4);
+        // 3:0 0x0A C0DATA[7:4] C0DATAH
+        Self::extract_channel_bits(ch0_0x0A, 0, &mut hrs, 4, 4);
+        // 7:0 0x09 C0DATA[15:8] C0DATAM
+        Self::extract_channel_bits(ch0_0x09, 0, &mut hrs, 8, 8);
+        // 5:4 0x0F C0DATA[17:16] C0DATAL
+        Self::extract_channel_bits(ch0_0x0F, 4, &mut hrs, 16, 2);
+        hrs &= self.resolution_mask;
+
+        Ok(RawSample::new(hrs, als))
     }
+
+
 
     fn reg_write(&mut self, sensor_reg_addr: RegAddrs, value: u8) -> Result<(), E> {
         let tr = [sensor_reg_addr as u8, value];
@@ -259,6 +193,15 @@ where
 
         Ok(buff[0])
     }
+
+    fn read_registers(&mut self, start_register: RegAddrs, buffer_to: &mut [u8]) -> Result<(), E> {
+        let start_reg_bytes = [start_register as u8];
+        self.i2c.write_read(SENSOR_ADDR, &start_reg_bytes, buffer_to)?;
+
+        Ok(())
+    }
+
+
 
     fn write_bits(mut from_right_aligned: u8, to: &mut u8, start_to: usize, count: usize) {
         assert!(start_to + count <= 8);
@@ -286,4 +229,104 @@ where
         from <<= start_to;                // shift prepared 'from' to align it with 'to'
         *to |= from;                      // put bits in 'to'
     }
+}
+
+pub type HrsValue = u32;
+pub type AlsValue = u32;
+pub struct RawSample {
+    pub hrs: HrsValue,
+    pub als: AlsValue
+}
+impl RawSample {
+    pub fn new(hrs: HrsValue, als: AlsValue) -> Self {
+        RawSample { hrs, als }
+    }
+
+    pub fn get_sum(&self) -> u32 {
+        self.hrs.saturating_sub(self.als)
+    }
+}
+
+
+
+#[allow(unused)]
+pub enum RegAddrs {
+    ID = 0x00,      // R/W Device ID 0x21
+    ENABLE = 0x01,  // R/W Enable HRS 0x68
+    C1DATAM = 0x08, // RO CH1 data register bit 10~3 0x00
+    C0DATAM = 0x09, // RO CH0 data register bit 15~8 0x00
+    C0DATAH = 0x0A, // RO CH0 data register bit 7~4 0x00
+    PDRIVER = 0x0C, // R/W HRS LED driver/PON/PDRIVE[0] 0x68
+    C1DATAH = 0x0D, // RO CH1 data register bit 17~11 0x00
+    C1DATAL = 0x0E, // RO CH1 data register bit 2~0 0x00
+    C0DATAL = 0x0F, // RO CH1 data register bit 17~16 and 3~0 0x00
+    RES = 0x16,     // R/W ALS and HRS resolution 0x66
+    HGAIN = 0x17    // R/W HRS gain 0x10
+}
+
+// bits 4:6, wait time between each conversion 
+#[allow(unused)]
+pub enum ADCWaitTime {
+    Ms800 = 0,
+    Ms400,
+    Ms200,
+    Ms100,
+    Ms75,
+    Ms50,
+    Ms12_5,
+    Ms0
+}
+impl ADCWaitTime {
+    pub fn get_us(&self) -> u32 {
+        match *self {
+            ADCWaitTime::Ms800  => 800_000,
+            ADCWaitTime::Ms400  => 400_000,
+            ADCWaitTime::Ms200  => 200_000,
+            ADCWaitTime::Ms100  => 100_000,
+            ADCWaitTime::Ms75   => 75_000,
+            ADCWaitTime::Ms50   => 50_000,
+            ADCWaitTime::Ms12_5 => 1_250,
+            ADCWaitTime::Ms0    => 0,
+        }
+    }
+}
+
+// led current 2-bit value, bit 1 of 0:1
+#[allow(unused)]
+pub enum LedCurrent {
+    Ma12_5 = 0,
+    Ma20,
+    Ma30,
+    Ma40
+}
+
+// ADC resolution
+#[derive(Clone, Copy, Debug)]
+pub enum BitsResolution {
+    _8 = 0,
+    _9,
+    _10,
+    _11,
+    _12,
+    _13,
+    _14,
+    _15,
+    _16,
+    _17,
+    _18
+}
+impl BitsResolution {
+    pub fn get_mask(&self) -> u32 {
+        (1 << (*self as u8 + 8)) - 1
+    }
+}
+
+// gain
+#[allow(unused)]
+pub enum Gain {
+    X1 = 0, 
+    X2,
+    X4,
+    X8,
+    X64
 }

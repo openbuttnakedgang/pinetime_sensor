@@ -30,14 +30,12 @@ use nrf52832_hal::{
     pac,
     Twim,
     twim,
-    gpio,
     target::twim0::frequency
 };
 
 // sensor module
 use embedded_hal::blocking::delay::DelayUs;
 mod hrs3300;
-mod hrs3300_examle;
 use core::sync::atomic;
 static GLOBAL_ALS: atomic::AtomicU32 = atomic::AtomicU32::new(0_u32);
 static GLOBAL_HRS: atomic::AtomicU32 = atomic::AtomicU32::new(0_u32);
@@ -64,7 +62,7 @@ fn main() -> ! {
         // TIMER1: timer1_peripheral,
         // TIMER2,
         TWIM0: twim0_peripheral,
-        SPIM1: spim1_peripheral,
+        // SPIM1: spim1_peripheral,
         ..
     } = pac::Peripherals::take().unwrap();    
 
@@ -87,10 +85,10 @@ fn main() -> ! {
         let pins = twim::Pins { scl, sda };    
         let twim_driver = Twim::new(twim0_peripheral, pins, frequency::FREQUENCY_A::K400);
         sensor = hrs3300::I2cDriver::new(twim_driver);
-        // sensor = hrs3300_examle::HRS3300::default(twim_driver);
     }   
 
     // Enable backlight
+    #[allow(unused)]
     let backlight = backlight::Backlight::init(
         gpio.p0_14.into_push_pull_output(Level::High).degrade(),
         gpio.p0_22.into_push_pull_output(Level::High).degrade(),
@@ -99,6 +97,7 @@ fn main() -> ! {
     );
 
     // Battery status
+    #[allow(unused)]
     let battery = battery::BatteryStatus::init(
         gpio.p0_12.into_floating_input(),
         gpio.p0_31.into_floating_input(),
@@ -107,9 +106,7 @@ fn main() -> ! {
 
     // Set up delay provider on TIMER0
     let mut delay_provider = delay::TimerDelay::new(timer0_peripheral);
-    match 
-        // try_hrs_example(&mut sensor, &mut delay_provider) 
-        try_hrs3300(&mut sensor, &mut delay_provider) 
+    match try_hrs3300(&mut sensor, &mut delay_provider) 
     {
         Result::Err(err) => {
             match err {
@@ -141,27 +138,19 @@ where
 
     sensor.init()?;
 
-    sensor.set_adc_wait_time(hrs3300::ADCWaitTime::Ms12_5)?;
-
-    sensor.set_gain(hrs3300::Gain::X4)?;
-
-    sensor.set_resolution(hrs3300::BitsResolution::_18)?;
-
     sensor.set_hrs_active(true)?;
 
     sensor.set_osc_active(true)?;
 
-    let mut hrs: u32;
-    let mut als: u32;
+    let mut raw_sample: hrs3300::RawSample;
     let mut sum: u32;
     
-    for _ in 0..1000000 {
-        hrs = sensor.get_ch0_hrs().unwrap();
-        als = sensor.get_ch1_als().unwrap();
-        sum = hrs.saturating_sub(als) as u32;
+    for _ in 0..10 {
+        raw_sample = sensor.read_raw_sample()?;
+        sum = raw_sample.get_sum();
 
-        GLOBAL_HRS.store(hrs, atomic::Ordering::Relaxed);
-        GLOBAL_ALS.store(als,  atomic::Ordering::Relaxed);
+        GLOBAL_HRS.store(raw_sample.hrs, atomic::Ordering::Relaxed);
+        GLOBAL_ALS.store(raw_sample.als,  atomic::Ordering::Relaxed);
         GLOBAL_SUM.store(sum, atomic::Ordering::Relaxed);
             
         delay_provider.delay_us(sensor.get_adc_wait_time_us());
@@ -172,44 +161,6 @@ where
 
     info!("HRS3300 sensor off:");
     sensor.set_hrs_active(false)?;
-
-    Ok(())
-}
-
-#[allow(unused)]
-fn try_hrs_example<T, CommE> (
-    sensor: &mut hrs3300_examle::HRS3300<T>, 
-    delay_provider: &mut delay::TimerDelay) -> Result<(), CommE> 
-where
-    T:  embedded_hal::blocking::i2c::Write::<Error = CommE> + 
-        embedded_hal::blocking::i2c::Read::<Error = CommE> + 
-        embedded_hal::blocking::i2c::WriteRead::<Error = CommE>,
-    CommE:  core::fmt::Debug
-{
-    info!("HRS3300 usage starts");
-
-    sensor.init().unwrap();
-
-    let mut valid_samples = 0;
-    for _ in 0..1000 {
-        if let Ok((c0data, c1data)) = sensor.read_raw_sample() {
-            println!("{}, {}", c0data, c1data);
-
-            GLOBAL_HRS.store(
-                c0data, 
-                atomic::Ordering::Relaxed);
-            GLOBAL_ALS.store(
-                c1data, 
-                atomic::Ordering::Relaxed);
-
-            valid_samples += 1;
-        }
-            
-        delay_provider.delay_us(50_u32);
-    }
-
-    println!("{}/1000 valid samples", valid_samples);
-    info!("All!");
 
     Ok(())
 }
