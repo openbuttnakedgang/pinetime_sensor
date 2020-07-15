@@ -51,6 +51,7 @@ pub fn init_with_level(level: Level) -> Result<(), SetLoggerError> {
     Ok(())
 }
 
+#[allow(unused)]
 pub fn init() -> Result<(), SetLoggerError> {
     init_with_level(Level::Trace)
 }

@@ -2,11 +2,15 @@
 use core::panic::PanicInfo;
 use core::sync::atomic::Ordering;
 
+#[allow(unused)]
 use cortex_m::asm::{self, bkpt, delay, wfi};
+#[allow(unused)]
 use cortex_m::interrupt::{disable as int_disable, enable as int_enable};
+#[allow(unused)]
 use cortex_m_rt::{entry, exception, ExceptionFrame};
 
 
+#[allow(unused)]
 pub fn reset() -> ! {
     cortex_m::interrupt::disable();
     cortex_m::peripheral::SCB::sys_reset();

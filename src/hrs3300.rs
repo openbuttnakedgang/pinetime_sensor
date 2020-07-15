@@ -233,6 +233,7 @@ where
 
 pub type HrsValue = u32;
 pub type AlsValue = u32;
+#[derive(Copy, Clone)]
 pub struct RawSample {
     pub hrs: HrsValue,
     pub als: AlsValue

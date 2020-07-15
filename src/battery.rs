@@ -59,6 +59,7 @@ impl BatteryStatus {
     /// Return whether the watch is currently charging.
     ///
     /// This returns the stored value. To fetch current data, call `update()` first.
+    #[allow(unused)]
     pub fn is_charging(&self) -> bool {
         self.charging
     }
@@ -66,6 +67,7 @@ impl BatteryStatus {
     /// Return the current battery charge in percent (0–100).
     ///
     /// This returns the stored value. To fetch current data, call `update()` first.
+    #[allow(unused)]
     pub fn percent(&self) -> u8 {
         unimplemented!();
     }
@@ -73,12 +75,14 @@ impl BatteryStatus {
     /// Return the current battery voltage in 0.1 volts.
     ///
     /// This returns the stored value. To fetch current data, call `update()` first.
+    #[allow(unused)]
     pub fn voltage(&self) -> u8 {
         self.voltage
     }
 
     /// Update the current battery status by reading information from the
     /// hardware. Return whether or not the values changed.
+    #[allow(unused)]
     pub fn update(&mut self) -> bool {
         let mut changed = false;
 

@@ -36,10 +36,12 @@ use nrf52832_hal::{
 // sensor module
 use embedded_hal::blocking::delay::DelayUs;
 mod hrs3300;
+mod ppg_processor;
 use core::sync::atomic;
 static GLOBAL_ALS: atomic::AtomicU32 = atomic::AtomicU32::new(0_u32);
 static GLOBAL_HRS: atomic::AtomicU32 = atomic::AtomicU32::new(0_u32);
 static GLOBAL_SUM: atomic::AtomicU32 = atomic::AtomicU32::new(0_u32);
+static GLOBAL_FIL: atomic::AtomicI32 = atomic::AtomicI32::new(0_i32);
 
 #[entry]
 fn main() -> ! {
@@ -142,16 +144,17 @@ where
 
     sensor.set_osc_active(true)?;
 
-    let mut raw_sample: hrs3300::RawSample;
-    let mut sum: u32;
+    // let mut ppg_processor = ppg_processor::PpgFilter::new();
     
-    for _ in 0..10 {
-        raw_sample = sensor.read_raw_sample()?;
-        sum = raw_sample.get_sum();
+    for _ in 0..1000000 {
+        let raw_sample = sensor.read_raw_sample()?;
 
         GLOBAL_HRS.store(raw_sample.hrs, atomic::Ordering::Relaxed);
         GLOBAL_ALS.store(raw_sample.als,  atomic::Ordering::Relaxed);
-        GLOBAL_SUM.store(sum, atomic::Ordering::Relaxed);
+        GLOBAL_SUM.store(raw_sample.get_sum(), atomic::Ordering::Relaxed);
+        // GLOBAL_FIL.store(
+        //     ppg_processor.consume_value(raw_sample) as i32, 
+        //     atomic::Ordering::Relaxed);
             
         delay_provider.delay_us(sensor.get_adc_wait_time_us());
     }
