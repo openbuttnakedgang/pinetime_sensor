@@ -24,7 +24,9 @@ use nrf52832_hal::gpio::{
 //     Pin, 
 //     PushPull
 };
-// use nrf52832_hal::prelude::*;
+#[allow(unused)]
+use nrf52832_hal::prelude::*;
+#[allow(unused)]
 use nrf52832_hal::{
     self as hal, 
     pac,
@@ -39,18 +41,10 @@ use nrf52832_hal::{
 mod hrs3300;
 
 // display module
-use embedded_graphics::{
-    style,
-    prelude::*,
-    pixelcolor,
-    primitives::rectangle,
-    fonts
-};
+mod ST7789_wrapper;
 use embedded_hal::digital::v2::OutputPin;
-const LCD_W: u16 = 240;
-const LCD_H: u16 = 240;
-const BACKGROUND_COLOR: pixelcolor::Rgb565 = pixelcolor::Rgb565::new(0, 0b000111, 0);
-const MARGIN: u16 = 10;
+use embedded_hal::blocking::spi;
+use embedded_hal::blocking::delay::DelayUs;
 
 #[entry]
 fn main() -> ! {
@@ -106,7 +100,7 @@ fn main() -> ! {
         1,
     );
 
-    let mut display_driver;
+    let mut display_wrapper;
     {
         // Set up SPI pins
         let spi_clk = gpio.p0_02
@@ -115,11 +109,11 @@ fn main() -> ! {
             .into_push_pull_output(Level::Low).degrade();
         let spi_miso = gpio.p0_04
             .into_floating_input().degrade();
-        let spi_pins = spim::Pins {
-            sck: spi_clk,
-            miso: Some(spi_miso),
-            mosi: Some(spi_mosi)
-        };
+        let spi_pins = spim::Pins { 
+            sck: spi_clk, 
+            miso: Some(spi_miso), 
+            mosi: Some(spi_mosi) 
+        };        
 
         // Set up LCD pins
         // LCD_RS - data/clock pin      (P0.18) 	Clock/data pin (CD)
@@ -147,49 +141,21 @@ fn main() -> ! {
         // when using other SPI devices on the same bus (such as external flash
         // storage) so that the display controller won't respond to the wrong
         // commands.
-
         lcd_chip_select.set_low().unwrap();
 
         // Set up delay provider on TIMER0
-        let delay_provider = delay::TimerDelay::new(timer0_peripheral);
+        let delay_provider = crate::delay::TimerDelay::new(timer0_peripheral);
         // Initialize LCD
-        display_driver = st7789::ST7789::new(
-            spi_interface, 
-            lcd_data_clock, lcd_reset, 
-            LCD_W, LCD_H, delay_provider);
+        let mut display_driver = st7789::ST7789::new(
+                spi_interface, 
+                lcd_data_clock, lcd_reset, 
+                ST7789_wrapper::LCD_W, ST7789_wrapper::LCD_H, 
+                delay_provider);
 
-        display_driver.init().unwrap();
-        display_driver.set_orientation(&st7789::Orientation::Portrait).unwrap();
-
-        // Draw something onto the LCD
-        let backdrop_style = style::PrimitiveStyleBuilder::new()
-            .fill_color(BACKGROUND_COLOR)
-            .build();
-        rectangle::Rectangle::new(
-            Point::new(0, 0), 
-            Point::new(LCD_W as i32, LCD_H as i32)
-        )
-            .into_styled(backdrop_style)
-            .draw(&mut display_driver)
-            .unwrap();
-
-        // Choose text style
-        let text_style = style::TextStyleBuilder::new(fonts::Font12x16)
-            .text_color(pixelcolor::Rgb565::WHITE)
-            .background_color(BACKGROUND_COLOR);
-
-        // Draw text
-        fonts::Text::new("HRS data ...", Point::new(10, 10))
-            .into_styled(text_style.build())
-            .draw(&mut display_driver)
-            .unwrap();
-
-        // Draw text
-        fonts::Text::new("20%", Point::new(10, 10 + 16 + MARGIN as i32))
-            .into_styled(text_style.build())
-            .draw(&mut display_driver)
-            .unwrap();
-    }
+        display_wrapper = ST7789_wrapper::SPIDriver::new(display_driver);
+    }        
+    display_wrapper.init();
+    display_wrapper.draw_text();
 
     // Battery status
     let battery = battery::BatteryStatus::init(
@@ -202,3 +168,14 @@ fn main() -> ! {
         asm::wfi();
     }
 }
+
+// fn try_st7789<RST, SPI, DC, DELAY> (display: ST7789_wrapper::SPIDriver<RST, SPI, DC, DELAY>) 
+//     -> Result<(), core::fmt::Debug> 
+// where
+//     SPI: spi::Write<u8>,
+//     DC: OutputPin,
+//     RST: OutputPin,
+//     DELAY: DelayUs<u32>,
+// {
+//     Ok(())
+// }
