@@ -65,21 +65,25 @@ impl Backlight {
     }
 
     /// Turn off the backlight.
+    #[allow(unused)]
     pub fn off(&mut self) {
         self.set(0);
     }
 
     /// Increase backlight brightness.
+    #[allow(unused)]
     pub fn brighter(&mut self) {
         self.set(self.brightness + 1);
     }
 
     /// Decrease backlight brightness.
+    #[allow(unused)]
     pub fn darker(&mut self) {
         self.set(self.brightness - 1);
     }
 
     /// Return the current brightness level (value between 0 and 7).
+    #[allow(unused)]
     pub fn get_brightness(&self) -> u8 {
         self.brightness
     }
