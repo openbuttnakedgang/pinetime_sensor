@@ -6,7 +6,8 @@ pub const SENSOR_ADDR: u8 = 0x44;
 pub const DEVICE_ID: u8 = 0x21;
 const SAMPLE_BLOCK_LEN: usize = 7;
 
-pub struct I2cDriver<I2C> {
+pub struct I2cDriver<I2C> 
+{
     i2c: I2C,
     adc_wait_time_us: u32,
     resolution_mask: u32
@@ -15,6 +16,7 @@ pub struct I2cDriver<I2C> {
 impl<I2C, E> I2cDriver<I2C> 
 where 
     I2C: i2c::Read<Error = E> + i2c::Write<Error = E> + i2c::WriteRead<Error = E>,
+    // I2C: twim::Instance + i2c::Read<Error = E> + i2c::Write<Error = E> + i2c::WriteRead<Error = E>,
     E: core::fmt::Debug
 {
     pub fn new(i2c: I2C) -> Self {

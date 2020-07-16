@@ -1,12 +1,15 @@
 use crate::hrs3300::RawSample as Rs;
 
+#[allow(unused)]
 pub const VALUES_BUFFER_LENGTH: usize = 100;
 
+#[allow(unused)]
 pub struct PpgFilter {
     pub values_buffer: [Rs; VALUES_BUFFER_LENGTH],  
     cursor: usize,  
 }
 impl PpgFilter{
+    #[allow(unused)]
     pub fn new () -> Self {
         PpgFilter {
             values_buffer: [
@@ -17,6 +20,7 @@ impl PpgFilter{
         }
     }
 
+    #[allow(unused)]
     pub fn consume_value(&mut self, value: Rs) -> i64 {
         self.cursor += 1;
         return if self.cursor >= self.values_buffer.len() {

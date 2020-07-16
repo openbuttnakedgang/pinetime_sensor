@@ -24,13 +24,18 @@ use nrf52832_hal::gpio::{
 //     Pin, 
 //     PushPull
 };
-// use nrf52832_hal::prelude::*;
+#[allow(unused)]
+use nrf52832_hal::prelude::*;
+#[allow(unused)]
 use nrf52832_hal::{
     self as hal, 
     pac,
     Twim,
     twim,
-    target::twim0::frequency
+    spim,
+    gpio,
+    target::twim0::frequency,
+    timer,
 };
 
 // sensor module
@@ -41,6 +46,12 @@ use core::sync::atomic;
 static GLOBAL_ALS: atomic::AtomicU32 = atomic::AtomicU32::new(0_u32);
 static GLOBAL_HRS: atomic::AtomicU32 = atomic::AtomicU32::new(0_u32);
 static GLOBAL_SUM: atomic::AtomicU32 = atomic::AtomicU32::new(0_u32);
+
+// display module
+#[allow(non_snake_case)]
+mod ST7789_wrapper;
+use embedded_hal::digital::v2::OutputPin;
+use embedded_hal::blocking::spi;
 
 #[entry]
 fn main() -> ! {
@@ -60,10 +71,10 @@ fn main() -> ! {
         SAADC: saadc_peripheral,
         // SPIM1,
         TIMER0: timer0_peripheral,
-        // TIMER1: timer1_peripheral,
-        // TIMER2,
+        TIMER1: timer1_peripheral,
+        TIMER2: timer2_peripheral,
         TWIM0: twim0_peripheral,
-        // SPIM1: spim1_peripheral,
+        SPIM1: spim1_peripheral,
         ..
     } = pac::Peripherals::take().unwrap();    
 
@@ -72,9 +83,91 @@ fn main() -> ! {
     // needed for Bluetooth to work.
     let _clocks = hal::clocks::Clocks::new(clock_peripheral).enable_ext_hfosc();
 
-
     // Set up GPIO peripheral
-    let gpio = hal::gpio::p0::Parts::new(p0_peripheral);
+    let gpio = hal::gpio::p0::Parts::new(p0_peripheral);  
+
+    // Enable backlight
+    #[allow(unused)]
+    let backlight = backlight::Backlight::init(
+        gpio.p0_14.into_push_pull_output(Level::High).degrade(),
+        gpio.p0_22.into_push_pull_output(Level::High).degrade(),
+        gpio.p0_23.into_push_pull_output(Level::High).degrade(),
+        1,
+    );
+
+    let mut display_wrapper;
+    {
+        // Set up SPI pins
+        let spi_clk = gpio.p0_02
+            .into_push_pull_output(Level::Low).degrade();
+        let spi_mosi = gpio.p0_03
+            .into_push_pull_output(Level::Low).degrade();
+        let spi_miso = gpio.p0_04
+            .into_floating_input().degrade();
+        let spi_pins = spim::Pins { 
+            sck: spi_clk, 
+            miso: Some(spi_miso), 
+            mosi: Some(spi_mosi) 
+        };        
+
+        // Set up LCD pins
+        // LCD_RS - data/clock pin      (P0.18) 	Clock/data pin (CD)
+        let lcd_data_clock = gpio.p0_18
+            .into_push_pull_output(Level::Low);
+        // LCD_CS - chip select         (P0.25) 	Chip select
+        let mut lcd_chip_select = gpio.p0_25
+            .into_push_pull_output(Level::Low);
+        // LCD_RESET - reset            (P0.26) 	Display reset
+        let lcd_reset = gpio.p0_26
+            .into_push_pull_output(Level::Low);
+
+        // Initialize SPI
+        let spi_interface = spim::Spim::new(
+            spim1_peripheral, 
+            spi_pins, 
+            // Use SPI at 8MHz (the fastest clock available on the nRF52832)
+            // because otherwise refreshing will be super slow.
+            spim::Frequency::M8, 
+            // SPI must be used in mode 3. Mode 0 (the default) won't work.
+            spim::MODE_3, 
+            0);
+
+        // Chip select must be held low while driving the display. It must be high
+        // when using other SPI devices on the same bus (such as external flash
+        // storage) so that the display controller won't respond to the wrong
+        // commands.
+        lcd_chip_select.set_low().unwrap();
+
+        // Set up delay provider on TIMER0
+        let delay_provider_0 = crate::delay::TimerDelay::new(timer0_peripheral);
+        // Initialize LCD
+        let display_driver = st7789::ST7789::new(
+                spi_interface, 
+                lcd_data_clock, lcd_reset, 
+                ST7789_wrapper::LCD_W, ST7789_wrapper::LCD_H, 
+                delay_provider_0);
+
+        display_wrapper = ST7789_wrapper::SPIDriver::new(display_driver);
+    }   
+
+    // Set up delay provider on TIMER1
+    let mut delay_provider_1 = crate::delay::TimerDelay::new(timer1_peripheral);   
+    match try_st7789(&mut display_wrapper, &mut delay_provider_1) {
+        Result::Err(err) => {
+            println!("error! {:?}", err);
+        },
+        Result::Ok(()) => {
+            println!("display success!");
+        }
+    }
+
+    // Battery status
+    #[allow(unused)]
+    let battery = battery::BatteryStatus::init(
+        gpio.p0_12.into_floating_input(),
+        gpio.p0_31.into_floating_input(),
+        saadc_peripheral,
+    ); 
     
     let mut sensor;
     {
@@ -86,28 +179,11 @@ fn main() -> ! {
         let pins = twim::Pins { scl, sda };    
         let twim_driver = Twim::new(twim0_peripheral, pins, frequency::FREQUENCY_A::K400);
         sensor = hrs3300::I2cDriver::new(twim_driver);
-    }   
-
-    // Enable backlight
-    #[allow(unused)]
-    let backlight = backlight::Backlight::init(
-        gpio.p0_14.into_push_pull_output(Level::High).degrade(),
-        gpio.p0_22.into_push_pull_output(Level::High).degrade(),
-        gpio.p0_23.into_push_pull_output(Level::High).degrade(),
-        1,
-    );
-
-    // Battery status
-    #[allow(unused)]
-    let battery = battery::BatteryStatus::init(
-        gpio.p0_12.into_floating_input(),
-        gpio.p0_31.into_floating_input(),
-        saadc_peripheral,
-    ); 
-
-    // Set up delay provider on TIMER0
-    let mut delay_provider = delay::TimerDelay::new(timer0_peripheral);
-    match try_hrs3300(&mut sensor, &mut delay_provider) 
+    } 
+    
+    // Set up delay provider on TIMER2
+    let mut delay_provider2 = delay::TimerDelay::new(timer2_peripheral);
+    match try_hrs3300(&mut sensor, &mut delay_provider2) 
     {
         Result::Err(err) => {
             match err {
@@ -126,14 +202,17 @@ fn main() -> ! {
     }
 }
 
-fn try_hrs3300<T, E> (
-    sensor: &mut hrs3300::I2cDriver<T>, 
-    delay_provider: &mut delay::TimerDelay) -> Result<(), E> 
+fn try_hrs3300<T, E, D> (
+        sensor: &mut hrs3300::I2cDriver<T>, 
+        delay_provider: &mut delay::TimerDelay<D>
+    ) 
+-> Result<(), E>
 where
+    E:  core::fmt::Debug,
     T:  embedded_hal::blocking::i2c::Write::<Error = E> + 
         embedded_hal::blocking::i2c::Read::<Error = E> + 
         embedded_hal::blocking::i2c::WriteRead::<Error = E>,
-    E:  core::fmt::Debug
+    D:  timer::Instance
 {       
     info!("HRS3300 usage starts");
 
@@ -143,7 +222,7 @@ where
 
     sensor.set_osc_active(true)?;
     
-    for _ in 0..1000000 {
+    for _ in 0..5000 {
         let raw_sample = sensor.read_raw_sample()?;
 
         GLOBAL_HRS.store(raw_sample.hrs, atomic::Ordering::Relaxed);
@@ -159,5 +238,37 @@ where
     info!("HRS3300 sensor off:");
     sensor.set_hrs_active(false)?;
 
+    Ok(())
+}
+
+fn try_st7789<RST, SPI, DC, DELAY, E, T> (
+    display: &mut ST7789_wrapper::SPIDriver<RST, SPI, DC, DELAY>,
+    delay_provider: &mut delay::TimerDelay<T>
+)
+-> Result<(), st7789::Error<SPI::Error, DC::Error, RST::Error>>
+where
+    SPI: spi::Write<u8>,
+    DC: OutputPin<Error = E>,
+    RST: OutputPin<Error = E>,
+    DELAY: DelayUs<u32>,
+    E: core::fmt::Debug,
+    T: timer::Instance
+{
+    display.init()?;
+    display.draw_backgound()?;
+    display.draw_axes()?;
+    display.count_sin();
+    display.draw_sin()?;
+
+    for _ in 0..100 {
+        display.clear_sin()?;
+        display.rotate_sin();
+        display.draw_axes()?;
+        display.draw_sin()?;
+        delay_provider.delay_us(50_000);
+    }
+
+    display.display_driver.hard_reset()?;
+    
     Ok(())
 }
