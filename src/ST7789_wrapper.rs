@@ -128,14 +128,17 @@ where
         let mut x = x_min-1;
         let mut y: i32;
 
-        let div = 20_f32;
+        let div = 10_f32;
         let mul = 100_f32;
 
         for p in self.plot_values.iter_mut() {
             x += 1;
             y = Self::sin(x, div, mul);
+
             p.x = x;
             p.y = y;
+
+            *p = Self::transform(*p);
         }
     }
 
@@ -145,16 +148,15 @@ where
             .stroke_width(1)
             .build();
 
-        let mut p1: Point = self.plot_values[0];
+        let mut p1: &Point = &self.plot_values[0];
         for p2 in &(self.plot_values[1..]) {
-            primitives::line::Line::new(
-                    Self::transform(p1), 
-                    Self::transform(*p2)
-                )
-                .into_styled(backdrop_style)
-                .draw(&mut self.display_driver)?;
+            if p1.y <= p2.y {
+                primitives::line::Line::new(*p1, *p2)
+                    .into_styled(backdrop_style)
+                    .draw(&mut self.display_driver)?;
+            }
 
-            p1 = *p2;
+            p1 = p2;
         }
 
         Ok(())
@@ -166,16 +168,15 @@ where
             .stroke_width(1)
             .build();
 
-        let mut p1: Point = self.plot_values[0];
+        let mut p1: &Point = &self.plot_values[0];
         for p2 in &(self.plot_values[1..]) {
-            primitives::line::Line::new(
-                    Self::transform(p1), 
-                    Self::transform(*p2)
-                )
-                .into_styled(backdrop_style)
-                .draw(&mut self.display_driver)?;
+            if p1.y <= p2.y {
+                primitives::line::Line::new(*p1, *p2)
+                    .into_styled(backdrop_style)
+                    .draw(&mut self.display_driver)?;
+            }
 
-            p1 = *p2;
+            p1 = p2;
         }
 
         Ok(())

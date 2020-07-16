@@ -1,25 +1,23 @@
-use embedded_hal::blocking::i2c;
-use core;
+use nrf52832_hal::{
+    twim,
+    pac
+};
+use embedded_hal::blocking::i2c::WriteRead;
 
 pub const SENSOR_ADDR: u8 = 0x44;
 #[allow(unused)]
 pub const DEVICE_ID: u8 = 0x21;
 const SAMPLE_BLOCK_LEN: usize = 7;
 
-pub struct I2cDriver<I2C> 
+pub struct I2cDriver
 {
-    i2c: I2C,
+    i2c: twim::Twim<pac::TWIM0>,
     adc_wait_time_us: u32,
     resolution_mask: u32
 }
 
-impl<I2C, E> I2cDriver<I2C> 
-where 
-    I2C: i2c::Read<Error = E> + i2c::Write<Error = E> + i2c::WriteRead<Error = E>,
-    // I2C: twim::Instance + i2c::Read<Error = E> + i2c::Write<Error = E> + i2c::WriteRead<Error = E>,
-    E: core::fmt::Debug
-{
-    pub fn new(i2c: I2C) -> Self {
+impl I2cDriver {
+    pub fn new(i2c: twim::Twim<pac::TWIM0>) -> Self {
         I2cDriver {
             i2c,
             adc_wait_time_us: 1250,
@@ -27,7 +25,7 @@ where
         }
     }
 
-    pub fn init(&mut self) -> Result<(), E> {
+    pub fn init(&mut self) -> Result<(), twim::Error> {
         // recommended values
 
         // ENABLE = 0x68 => 
@@ -52,11 +50,11 @@ where
     }
     
     #[allow(unused)]
-    pub fn get_id(&mut self) -> Result<u8, E> {
+    pub fn get_id(&mut self) -> Result<u8, twim::Error> {
         self.reg_read(RegAddrs::ENABLE)
     }
 
-    pub fn set_hrs_active(&mut self, active: bool) -> Result<(), E> {
+    pub fn set_hrs_active(&mut self, active: bool) -> Result<(), twim::Error> {
         let mut reg_data = self.reg_read(RegAddrs::ENABLE)?; 
 
         let value: u8 = active as u8;
@@ -66,7 +64,7 @@ where
         self.reg_write(RegAddrs::ENABLE, reg_data)
     }
 
-    pub fn set_adc_wait_time(&mut self, wt: ADCWaitTime) -> Result<(), E> {
+    pub fn set_adc_wait_time(&mut self, wt: ADCWaitTime) -> Result<(), twim::Error> {
         let mut reg_data = self.reg_read(RegAddrs::ENABLE)?;  
 
         self.adc_wait_time_us = wt.get_us();
@@ -78,11 +76,12 @@ where
         self.reg_write(RegAddrs::ENABLE, reg_data)
     }
 
-    pub fn get_adc_wait_time_us(&self) -> u32 {
+    pub fn get_adc_wait_time_us(&self) -> u32 
+    {
         self.adc_wait_time_us
     }
 
-    pub fn set_led_current(&mut self, lc: LedCurrent) -> Result<(), E> {
+    pub fn set_led_current(&mut self, lc: LedCurrent) -> Result<(), twim::Error> {
         let value = lc as u8;
 
         let mut enable_data = self.reg_read( RegAddrs::ENABLE)?; 
@@ -100,7 +99,7 @@ where
         self.reg_write( RegAddrs::PDRIVER, pdriver_data)
     }
 
-    pub fn set_osc_active(&mut self, active: bool) -> Result<(), E> {
+    pub fn set_osc_active(&mut self, active: bool) -> Result<(), twim::Error> {
         let mut reg_data = self.reg_read(RegAddrs::PDRIVER)?;  
 
         let value: u8 = active as u8;
@@ -110,7 +109,7 @@ where
         self.reg_write(RegAddrs::PDRIVER, reg_data)
     }
 
-    pub fn set_gain(&mut self, gain: Gain) -> Result<(), E> {
+    pub fn set_gain(&mut self, gain: Gain) -> Result<(), twim::Error> {
         let mut reg_data = self.reg_read(RegAddrs::HGAIN)?;  
 
         let value = gain as u8;
@@ -120,7 +119,7 @@ where
         self.reg_write(RegAddrs::HGAIN, reg_data)
     }
 
-    pub fn set_resolution(&mut self, res: BitsResolution) -> Result<(), E> {
+    pub fn set_resolution(&mut self, res: BitsResolution) -> Result<(), twim::Error> {
         let mut reg_data = self.reg_read(RegAddrs::RES)?;  
 
         let value = res as u8;
@@ -135,7 +134,7 @@ where
 
 
     #[allow(non_snake_case)]
-    pub fn read_raw_sample(&mut self) -> Result<RawSample, E>{
+    pub fn read_raw_sample(&mut self) -> Result<RawSample, twim::Error> {
         let mut sample_buff = [0u8; SAMPLE_BLOCK_LEN];
         self.read_registers(RegAddrs::C1DATAM, &mut sample_buff)?;
 
@@ -178,27 +177,26 @@ where
     }
 
 
-
-    fn reg_write(&mut self, sensor_reg_addr: RegAddrs, value: u8) -> Result<(), E> {
+    fn reg_write(&mut self, sensor_reg_addr: RegAddrs, value: u8) -> Result<(), twim::Error> {
         let tr = [sensor_reg_addr as u8, value];
 
-        self.i2c.write(SENSOR_ADDR, &tr)?;
+        self.i2c.write(SENSOR_ADDR, &tr).unwrap();
 
         Ok(())
     }
 
-    fn reg_read(&mut self, sensor_reg_addr: RegAddrs) -> Result<u8, E> {
+    fn reg_read(&mut self, sensor_reg_addr: RegAddrs) -> Result<u8, twim::Error> {
         let mut buff = [0_u8; 1];
         let tr = [sensor_reg_addr as u8];
 
-        self.i2c.write_read(SENSOR_ADDR, &tr, &mut buff)?;
+        self.i2c.write_read(SENSOR_ADDR, &tr, &mut buff).unwrap();
 
         Ok(buff[0])
     }
 
-    fn read_registers(&mut self, start_register: RegAddrs, buffer_to: &mut [u8]) -> Result<(), E> {
+    fn read_registers(&mut self, start_register: RegAddrs, buffer_to: &mut [u8]) -> Result<(), twim::Error> {
         let start_reg_bytes = [start_register as u8];
-        self.i2c.write_read(SENSOR_ADDR, &start_reg_bytes, buffer_to)?;
+        self.i2c.write_read(SENSOR_ADDR, &start_reg_bytes, buffer_to).unwrap();
 
         Ok(())
     }
@@ -206,7 +204,7 @@ where
 
 
     fn write_bits(mut from_right_aligned: u8, to: &mut u8, start_to: usize, count: usize) {
-        assert!(start_to + count <= 8);
+        // assert!(start_to + count <= 8);
     
         let mask: u8 = (1 << count) - 1;   // create mask with ones in places 0..n, where n = 'start_from'
         from_right_aligned &= mask;        // extract bits from 'from'
@@ -217,8 +215,8 @@ where
     }
     
     fn extract_channel_bits(from: u8, start_from: usize, to: &mut u32, start_to: usize, count: usize) {
-        assert!(start_from + count <= 8);
-        assert!(start_to + count <= 32);
+        // assert!(start_from + count <= 8);
+        // assert!(start_to + count <= 32);
     
         let mut from = from as u32;
     
@@ -249,7 +247,6 @@ impl RawSample {
         self.hrs.saturating_sub(self.als)
     }
 }
-
 
 
 #[allow(unused)]
