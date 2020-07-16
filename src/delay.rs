@@ -8,21 +8,34 @@ use nrf52832_hal::{
     self as hal,
     pac,
     timer::Timer,
+    timer::Instance,
 };
 
-pub struct TimerDelay {
-    timer: hal::Timer<pac::TIMER0>,
+// pub struct TimerDelay {
+//     timer: hal::Timer<pac::TIMER0>,
+// }
+
+// impl TimerDelay {
+//     pub fn new(timer0: pac::TIMER0) -> Self {
+//         Self {
+//             timer: Timer::new(timer0),
+//         }
+//     }
+// }
+
+pub struct TimerDelay<T: Instance> {
+    timer: hal::Timer<T>,
 }
 
-impl TimerDelay {
-    pub fn new(timer0: pac::TIMER0) -> Self {
+impl<T: Instance> TimerDelay<T> {
+    pub fn new(timer_driver: T) -> Self {
         Self {
-            timer: Timer::new(timer0),
+            timer: Timer::new(timer_driver),
         }
     }
 }
 
-impl DelayUs<u32> for TimerDelay {
+impl<T: Instance> DelayUs<u32> for TimerDelay<T> {
     fn delay_us(&mut self, us: u32) {
         // Currently the HAL timer is hardcoded at 1 MHz,
         // so 1 cycle = 1 µs.

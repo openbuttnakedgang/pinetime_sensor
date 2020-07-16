@@ -34,13 +34,15 @@ use nrf52832_hal::{
     twim,
     spim,
     gpio,
-    target::twim0::frequency
+    target::twim0::frequency,
+    timer::Instance,
 };
 
 // sensor module
 mod hrs3300;
 
 // display module
+#[allow(non_snake_case)]
 mod ST7789_wrapper;
 use embedded_hal::digital::v2::OutputPin;
 use embedded_hal::blocking::spi;
@@ -64,9 +66,9 @@ fn main() -> ! {
         SAADC: saadc_peripheral,
         // SPIM1,
         TIMER0: timer0_peripheral,
-        // TIMER1: timer1_peripheral,
+        TIMER1: timer1_peripheral,
         // TIMER2,
-        TWIM0: twim0_peripheral,
+        // TWIM0: twim0_peripheral,
         SPIM1: spim1_peripheral,
         ..
     } = pac::Peripherals::take().unwrap();    
@@ -80,18 +82,19 @@ fn main() -> ! {
     // Set up GPIO peripheral
     let gpio = hal::gpio::p0::Parts::new(p0_peripheral);
     
-    let mut sensor;
-    {
-        // P0.06 : I²C SDA
-        let sda = gpio.p0_06.into_floating_input().degrade();
-        // P0.07 : I²C SCL
-        let scl = gpio.p0_07.into_floating_input().degrade();
-        // pins for TWIM0
-        let pins = twim::Pins { scl, sda };    
-        let twim_driver = Twim::new(twim0_peripheral, pins, frequency::FREQUENCY_A::K400);
-        sensor = hrs3300::I2cDriver::new(twim_driver);
-    }   
+    // let mut sensor;
+    // {
+    //     // P0.06 : I²C SDA
+    //     let sda = gpio.p0_06.into_floating_input().degrade();
+    //     // P0.07 : I²C SCL
+    //     let scl = gpio.p0_07.into_floating_input().degrade();
+    //     // pins for TWIM0
+    //     let pins = twim::Pins { scl, sda };    
+    //     let twim_driver = Twim::new(twim0_peripheral, pins, frequency::FREQUENCY_A::K400);
+    //     sensor = hrs3300::I2cDriver::new(twim_driver);
+    // }   
 
+    #[allow(unused)]
     // Enable backlight
     let backlight = backlight::Backlight::init(
         gpio.p0_14.into_push_pull_output(Level::High).degrade(),
@@ -144,20 +147,30 @@ fn main() -> ! {
         lcd_chip_select.set_low().unwrap();
 
         // Set up delay provider on TIMER0
-        let delay_provider = crate::delay::TimerDelay::new(timer0_peripheral);
+        let delay_provider_0 = crate::delay::TimerDelay::new(timer0_peripheral);
         // Initialize LCD
-        let mut display_driver = st7789::ST7789::new(
+        let display_driver = st7789::ST7789::new(
                 spi_interface, 
                 lcd_data_clock, lcd_reset, 
                 ST7789_wrapper::LCD_W, ST7789_wrapper::LCD_H, 
-                delay_provider);
+                delay_provider_0);
 
         display_wrapper = ST7789_wrapper::SPIDriver::new(display_driver);
-    }        
-    display_wrapper.init();
-    display_wrapper.draw_text();
+    }   
+
+    // Set up delay provider on TIMER1
+    let mut delay_provider_1 = crate::delay::TimerDelay::new(timer1_peripheral);   
+    match try_st7789(&mut display_wrapper, &mut delay_provider_1) {
+        Result::Err(err) => {
+            println!("error! {:?}", err);
+        },
+        Result::Ok(()) => {
+            println!("display success!");
+        }
+    }
 
     // Battery status
+    #[allow(unused)]
     let battery = battery::BatteryStatus::init(
         gpio.p0_12.into_floating_input(),
         gpio.p0_31.into_floating_input(),
@@ -169,13 +182,31 @@ fn main() -> ! {
     }
 }
 
-// fn try_st7789<RST, SPI, DC, DELAY> (display: ST7789_wrapper::SPIDriver<RST, SPI, DC, DELAY>) 
-//     -> Result<(), core::fmt::Debug> 
-// where
-//     SPI: spi::Write<u8>,
-//     DC: OutputPin,
-//     RST: OutputPin,
-//     DELAY: DelayUs<u32>,
-// {
-//     Ok(())
-// }
+fn try_st7789<RST, SPI, DC, DELAY, E, T :Instance> (
+    display: &mut ST7789_wrapper::SPIDriver<RST, SPI, DC, DELAY>,
+    delay_provider: &mut delay::TimerDelay<T>
+)
+-> Result<(), st7789::Error<SPI::Error, DC::Error, RST::Error>>
+where
+    SPI: spi::Write<u8>,
+    DC: OutputPin<Error = E>,
+    RST: OutputPin<Error = E>,
+    DELAY: DelayUs<u32>,
+    E: core::fmt::Debug
+{
+    display.init()?;
+    // display.draw_text()?;
+    display.draw_axes()?;
+    display.count_sin();
+    display.draw_sin()?;
+
+    for _ in 0..100000 {
+        display.clear_sin()?;
+        display.rotate_sin();
+        display.draw_axes()?;
+        display.draw_sin()?;
+        delay_provider.delay_us(100_000);
+    }
+
+    Ok(())
+}
