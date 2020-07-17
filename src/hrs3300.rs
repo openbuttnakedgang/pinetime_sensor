@@ -1,6 +1,6 @@
 use nrf52832_hal::{
     twim,
-    pac
+    pac,
 };
 use embedded_hal::blocking::i2c::WriteRead;
 
@@ -9,23 +9,25 @@ pub const SENSOR_ADDR: u8 = 0x44;
 pub const DEVICE_ID: u8 = 0x21;
 const SAMPLE_BLOCK_LEN: usize = 7;
 
-pub struct I2cDriver
-{
-    i2c: twim::Twim<pac::TWIM0>,
+pub type SensorError = twim::Error;
+type SensorTwim = twim::Twim<pac::TWIM0>;
+
+pub struct Sensor {
+    i2c: SensorTwim,
     adc_wait_time_us: u32,
     resolution_mask: u32
 }
 
-impl I2cDriver {
-    pub fn new(i2c: twim::Twim<pac::TWIM0>) -> Self {
-        I2cDriver {
+impl Sensor {
+    pub fn new(i2c: SensorTwim) -> Self {
+        Sensor {
             i2c,
             adc_wait_time_us: 1250,
             resolution_mask: (1 << 15) - 1
         }
     }
 
-    pub fn init(&mut self) -> Result<(), twim::Error> {
+    pub fn init(&mut self) -> Result<(), SensorError> {
         // recommended values
 
         // ENABLE = 0x68 => 
@@ -50,11 +52,11 @@ impl I2cDriver {
     }
     
     #[allow(unused)]
-    pub fn get_id(&mut self) -> Result<u8, twim::Error> {
+    pub fn get_id(&mut self) -> Result<u8, SensorError> {
         self.reg_read(RegAddrs::ENABLE)
     }
 
-    pub fn set_hrs_active(&mut self, active: bool) -> Result<(), twim::Error> {
+    pub fn set_hrs_active(&mut self, active: bool) -> Result<(), SensorError> {
         let mut reg_data = self.reg_read(RegAddrs::ENABLE)?; 
 
         let value: u8 = active as u8;
@@ -64,7 +66,7 @@ impl I2cDriver {
         self.reg_write(RegAddrs::ENABLE, reg_data)
     }
 
-    pub fn set_adc_wait_time(&mut self, wt: ADCWaitTime) -> Result<(), twim::Error> {
+    pub fn set_adc_wait_time(&mut self, wt: ADCWaitTime) -> Result<(), SensorError> {
         let mut reg_data = self.reg_read(RegAddrs::ENABLE)?;  
 
         self.adc_wait_time_us = wt.get_us();
@@ -76,12 +78,11 @@ impl I2cDriver {
         self.reg_write(RegAddrs::ENABLE, reg_data)
     }
 
-    pub fn get_adc_wait_time_us(&self) -> u32 
-    {
+    pub fn get_adc_wait_time_us(&self) -> u32 {
         self.adc_wait_time_us
     }
 
-    pub fn set_led_current(&mut self, lc: LedCurrent) -> Result<(), twim::Error> {
+    pub fn set_led_current(&mut self, lc: LedCurrent) -> Result<(), SensorError> {
         let value = lc as u8;
 
         let mut enable_data = self.reg_read( RegAddrs::ENABLE)?; 
@@ -99,7 +100,7 @@ impl I2cDriver {
         self.reg_write( RegAddrs::PDRIVER, pdriver_data)
     }
 
-    pub fn set_osc_active(&mut self, active: bool) -> Result<(), twim::Error> {
+    pub fn set_osc_active(&mut self, active: bool) -> Result<(), SensorError> {
         let mut reg_data = self.reg_read(RegAddrs::PDRIVER)?;  
 
         let value: u8 = active as u8;
@@ -109,7 +110,7 @@ impl I2cDriver {
         self.reg_write(RegAddrs::PDRIVER, reg_data)
     }
 
-    pub fn set_gain(&mut self, gain: Gain) -> Result<(), twim::Error> {
+    pub fn set_gain(&mut self, gain: Gain) -> Result<(), SensorError> {
         let mut reg_data = self.reg_read(RegAddrs::HGAIN)?;  
 
         let value = gain as u8;
@@ -119,7 +120,7 @@ impl I2cDriver {
         self.reg_write(RegAddrs::HGAIN, reg_data)
     }
 
-    pub fn set_resolution(&mut self, res: BitsResolution) -> Result<(), twim::Error> {
+    pub fn set_resolution(&mut self, res: BitsResolution) -> Result<(), SensorError> {
         let mut reg_data = self.reg_read(RegAddrs::RES)?;  
 
         let value = res as u8;
@@ -132,9 +133,8 @@ impl I2cDriver {
     }
 
 
-
     #[allow(non_snake_case)]
-    pub fn read_raw_sample(&mut self) -> Result<RawSample, twim::Error> {
+    pub fn read_raw_sample(&mut self) -> Result<RawSample, SensorError> {
         let mut sample_buff = [0u8; SAMPLE_BLOCK_LEN];
         self.read_registers(RegAddrs::C1DATAM, &mut sample_buff)?;
 
@@ -177,7 +177,7 @@ impl I2cDriver {
     }
 
 
-    fn reg_write(&mut self, sensor_reg_addr: RegAddrs, value: u8) -> Result<(), twim::Error> {
+    fn reg_write(&mut self, sensor_reg_addr: RegAddrs, value: u8) -> Result<(), SensorError> {
         let tr = [sensor_reg_addr as u8, value];
 
         self.i2c.write(SENSOR_ADDR, &tr).unwrap();
@@ -185,7 +185,7 @@ impl I2cDriver {
         Ok(())
     }
 
-    fn reg_read(&mut self, sensor_reg_addr: RegAddrs) -> Result<u8, twim::Error> {
+    fn reg_read(&mut self, sensor_reg_addr: RegAddrs) -> Result<u8, SensorError> {
         let mut buff = [0_u8; 1];
         let tr = [sensor_reg_addr as u8];
 
@@ -194,13 +194,12 @@ impl I2cDriver {
         Ok(buff[0])
     }
 
-    fn read_registers(&mut self, start_register: RegAddrs, buffer_to: &mut [u8]) -> Result<(), twim::Error> {
+    fn read_registers(&mut self, start_register: RegAddrs, buffer_to: &mut [u8]) -> Result<(), SensorError> {
         let start_reg_bytes = [start_register as u8];
         self.i2c.write_read(SENSOR_ADDR, &start_reg_bytes, buffer_to).unwrap();
 
         Ok(())
     }
-
 
 
     fn write_bits(mut from_right_aligned: u8, to: &mut u8, start_to: usize, count: usize) {

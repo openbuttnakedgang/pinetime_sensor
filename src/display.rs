@@ -1,14 +1,14 @@
-use embedded_hal::{
-    digital::v2::OutputPin,
-    blocking::delay::DelayUs,
-    blocking::spi
-};
 use embedded_graphics::{
     style,
     prelude::*,
     pixelcolor,
     primitives,
     fonts
+};
+use nrf52832_hal::{
+    gpio,
+    spim,
+    pac,
 };
 
 const BACKGROUND_COLOR: pixelcolor::Rgb565 = pixelcolor::Rgb565::WHITE;
@@ -20,40 +20,37 @@ const MARGIN: u16 = 10;
 pub const LCD_W: u16 = 240;
 pub const LCD_H: u16 = 240;
 
-pub struct SPIDriver<RST, SPI, DC, DELAY> 
-where
-    SPI: spi::Write<u8>,
-    DC: OutputPin,
-    RST: OutputPin,
-    DELAY: DelayUs<u32>,
+type SPIType    = spim::Spim<pac::SPIM1>;
+type DCType     = gpio::p0::P0_18<gpio::Output<gpio::PushPull>>;
+type RSTType    = gpio::p0::P0_26<gpio::Output<gpio::PushPull>>;
+type DELAYType  = crate::DisplayDelayProviderType;
+type ErrorType  = core::convert::Infallible;
+
+pub type DisplayType        = st7789::ST7789<SPIType, DCType, RSTType, DELAYType>;
+pub type DisplayErrorType   = st7789::Error<ErrorType, ErrorType, ErrorType>;
+
+pub struct DisplayDriver 
 {
-    pub display_driver: st7789::ST7789::<SPI, DC, RST, DELAY>,
+    pub display_driver: DisplayType,
     plot_values: [Point; LCD_W as usize]
 }
 
-impl<RST, SPI, DC, DELAY, E> SPIDriver<RST, SPI, DC, DELAY> 
-where 
-    SPI: spi::Write<u8>,
-    DC: OutputPin<Error = E>,
-    RST: OutputPin<Error = E>,
-    DELAY: DelayUs<u32>,
-    E: core::fmt::Debug
-{
-    pub fn new(display_driver: st7789::ST7789<SPI, DC, RST, DELAY>) -> Self {
-        SPIDriver::<RST, SPI, DC, DELAY> { 
+impl DisplayDriver {
+    pub fn new(display_driver: DisplayType) -> Self {
+        DisplayDriver { 
             display_driver, 
             plot_values: [Point::default(); LCD_W as usize]
         }
     }
     
-    pub fn init(&mut self) -> Result<(), st7789::Error<SPI::Error, DC::Error, RST::Error>> {
-        self.display_driver.init()?;       
-        self.display_driver.set_orientation(&st7789::Orientation::Portrait)?;
+    pub fn init(&mut self) -> Result<(), DisplayErrorType> {
+        self.display_driver.init().unwrap();       
+        self.display_driver.set_orientation(&st7789::Orientation::Portrait).unwrap();
         Ok(())
     }
 
     #[allow(unused)]
-    pub fn draw_text(&mut self) -> Result<(), st7789::Error<SPI::Error, DC::Error, RST::Error>> {
+    pub fn draw_text(&mut self) -> Result<(), DisplayErrorType> {
         // Draw something onto the LCD
         let backdrop_style = style::PrimitiveStyleBuilder::new()
             .fill_color(pixelcolor::Rgb565::RED)
@@ -64,7 +61,7 @@ where
             Point::new(LCD_W as i32, LCD_H as i32)
         )
             .into_styled(backdrop_style)
-            .draw(&mut self.display_driver)?;
+            .draw(&mut self.display_driver).unwrap();
 
         // Choose text style
         let text_style = style::TextStyleBuilder::new(fonts::Font12x16)
@@ -74,17 +71,17 @@ where
         // Draw text
         fonts::Text::new("HRS data ...", Point::new(10, 10))
             .into_styled(text_style.build())
-            .draw(&mut self.display_driver)?;
+            .draw(&mut self.display_driver).unwrap();
 
         // Draw text
         fonts::Text::new("20%", Point::new(10, 10 + 16 + MARGIN as i32))
             .into_styled(text_style.build())
-            .draw(&mut self.display_driver)?;
+            .draw(&mut self.display_driver).unwrap();
 
         Ok(())
     }
 
-    pub fn draw_backgound(&mut self)  -> Result<(), st7789::Error<SPI::Error, DC::Error, RST::Error>> {
+    pub fn draw_backgound(&mut self)  -> Result<(), DisplayErrorType> {
         // background
         let backdrop_style = style::PrimitiveStyleBuilder::new()
         .fill_color(BACKGROUND_COLOR)
@@ -95,12 +92,12 @@ where
         Point::new(LCD_W as i32, LCD_H as i32)
         )
         .into_styled(backdrop_style)
-        .draw(&mut self.display_driver)?;
+        .draw(&mut self.display_driver).unwrap();
 
         Ok(())
     }
 
-    pub fn draw_axes(&mut self) -> Result<(), st7789::Error<SPI::Error, DC::Error, RST::Error>> {
+    pub fn draw_axes(&mut self) -> Result<(), DisplayErrorType> {
         let line_style = style::PrimitiveStyleBuilder::new()
         .stroke_color(AXES_COLOR)
         .stroke_width(1)
@@ -111,14 +108,14 @@ where
         let ox2 = Point::new(LCD_W as i32,  LCD_H as i32 / 2 + 1);
         primitives::line::Line::new(ox1, ox2)
             .into_styled(line_style)
-            .draw(&mut self.display_driver)?;
+            .draw(&mut self.display_driver).unwrap();
 
         // Y axis
         let oy1 = Point::new(LCD_H as i32 / 2,      0);
         let oy2 = Point::new(LCD_H as i32 / 2 + 1,  LCD_H as i32);
         primitives::line::Line::new(oy1, oy2)
             .into_styled(line_style)
-            .draw(&mut self.display_driver)?;
+            .draw(&mut self.display_driver).unwrap();
 
         Ok(())
     }
@@ -133,16 +130,16 @@ where
 
         for p in self.plot_values.iter_mut() {
             x += 1;
-            y = Self::sin(x, div, mul);
+            y = sin(x, div, mul);
 
             p.x = x;
             p.y = y;
 
-            *p = Self::transform(*p);
+            *p = transform(*p);
         }
     }
 
-    pub fn draw_sin(&mut self) -> Result<(), st7789::Error<SPI::Error, DC::Error, RST::Error>> {
+    pub fn draw_sin(&mut self) -> Result<(), DisplayErrorType> {
         let backdrop_style = style::PrimitiveStyleBuilder::new()
             .stroke_color(LINE_COLOR)
             .stroke_width(1)
@@ -153,7 +150,7 @@ where
             if p1.y <= p2.y {
                 primitives::line::Line::new(*p1, *p2)
                     .into_styled(backdrop_style)
-                    .draw(&mut self.display_driver)?;
+                    .draw(&mut self.display_driver).unwrap();
             }
 
             p1 = p2;
@@ -162,7 +159,7 @@ where
         Ok(())
     }
 
-    pub fn clear_sin(&mut self) -> Result<(), st7789::Error<SPI::Error, DC::Error, RST::Error>> {
+    pub fn clear_sin(&mut self) -> Result<(), DisplayErrorType> {
         let backdrop_style = style::PrimitiveStyleBuilder::new()
             .stroke_color(BACKGROUND_COLOR)
             .stroke_width(1)
@@ -173,7 +170,7 @@ where
             if p1.y <= p2.y {
                 primitives::line::Line::new(*p1, *p2)
                     .into_styled(backdrop_style)
-                    .draw(&mut self.display_driver)?;
+                    .draw(&mut self.display_driver).unwrap();
             }
 
             p1 = p2;
@@ -189,48 +186,48 @@ where
         }
         (self.plot_values.last_mut().unwrap()).y = y;
     }
+}
 
-    fn transform(p: Point) -> Point {
-        Point::new(
-            Self::clamp(p.y + LCD_H as i32 / 2, 0, LCD_W),
-            Self::clamp(p.x + LCD_W as i32 / 2, 0, LCD_H)
-        )
+fn transform(p: Point) -> Point {
+    Point::new(
+        clamp(p.y + LCD_H as i32 / 2, 0, LCD_W),
+        clamp(p.x + LCD_W as i32 / 2, 0, LCD_H)
+    )
+}
+
+fn clamp(x: i32, min: u16, max: u16) -> i32 {
+    let x_u16 = x as u16;
+    if x_u16 > max { max as i32 }
+    else if x_u16 < min { min as i32 }
+    else { x as i32 }
+}
+
+// y = mul * sin(x / div)
+fn sin(x: i32, div: f32, mul: f32) -> i32 {
+    let mut y: f32 = 0_f32;
+    let x = x as f32;
+
+    let mut sign: f32 = 1_f32;
+    let mut dx: f32 = x / div;
+
+    let mut den_factor: f32 = 1_f32;
+
+    loop {
+        y += sign * dx; 
+
+        // calculate next addition            
+        dx *= x / div * x / div;
+
+        den_factor += 1_f32;
+        dx /= den_factor;
+        den_factor += 1_f32;
+        dx /= den_factor;
+        //println!("dx: '{}'", dx);
+
+        if dx < 0.1_f32 && dx > -0.1_f32 { break; }
+
+        sign *= -1_f32;
     }
 
-    fn clamp(x: i32, min: u16, max: u16) -> i32 {
-        let x_u16 = x as u16;
-        if x_u16 > max { max as i32 }
-        else if x_u16 < min { min as i32 }
-        else { x as i32 }
-    }
-    
-    // y = mul * sin(x / div)
-    fn sin(x: i32, div: f32, mul: f32) -> i32 {
-        let mut y: f32 = 0_f32;
-        let x = x as f32;
-    
-        let mut sign: f32 = 1_f32;
-        let mut dx: f32 = x / div;
-    
-        let mut den_factor: f32 = 1_f32;
-    
-        loop {
-            y += sign * dx; 
-    
-            // calculate next addition            
-            dx *= x / div * x / div;
-    
-            den_factor += 1_f32;
-            dx /= den_factor;
-            den_factor += 1_f32;
-            dx /= den_factor;
-            //println!("dx: '{}'", dx);
-    
-            if dx < 0.1_f32 && dx > -0.1_f32 { break; }
-    
-            sign *= -1_f32;
-        }
-    
-        (y * mul) as i32
-    }
+    (y * mul) as i32
 }

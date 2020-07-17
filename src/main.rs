@@ -15,8 +15,7 @@ mod delay;
 use cortex_m::asm;
 use cortex_m_rt::entry;
 use nrf52832_hal::{
-    twim,
-    timer,
+    pac,
 };
 
 mod init;
@@ -26,26 +25,23 @@ use embedded_hal::blocking::delay::DelayUs;
 mod hrs3300;
 mod ppg_processor;
 use core::sync::atomic;
+#[no_mangle]
 static GLOBAL_ALS: atomic::AtomicU32 = atomic::AtomicU32::new(0_u32);
+#[no_mangle]
 static GLOBAL_HRS: atomic::AtomicU32 = atomic::AtomicU32::new(0_u32);
+#[no_mangle]
 static GLOBAL_SUM: atomic::AtomicU32 = atomic::AtomicU32::new(0_u32);
+type SensorTimerType = pac::TIMER0;
+type SensorDelayProviderType = delay::TimerDelay<SensorTimerType>;
 
 // display module
 #[allow(non_snake_case)]
-mod ST7789_wrapper;
-use embedded_hal::digital::v2::OutputPin;
-use embedded_hal::blocking::spi;
+mod display;
+type DisplayTimerType = pac::TIMER1;
+type DisplayDelayProviderType = delay::TimerDelay<DisplayTimerType>;
 
 #[entry]
 fn main() -> ! {
-    emblog::init_with_level(log::Level::Trace).unwrap();
-
-    error!("Test error log lvl");
-    warn! ("Test warn log lvl");
-    info! ("Test info log lvl");
-    debug!("Test debug log lvl");
-    trace!("Test trace log lvl");
-    
     #[allow(unused)]
     let init::Components {
         mut display_wrapper, 
@@ -55,41 +51,63 @@ fn main() -> ! {
         mut delay_provider
     } = init::Components::new();
 
-    match try_st7789(&mut display_wrapper, &mut delay_provider) {
-        Result::Err(err) => {
-            println!("error! {:?}", err);
-        },
-        Result::Ok(()) => {
-            println!("display success!");
-        }
-    } 
-    
-    match try_hrs3300(&mut sensor, &mut delay_provider) 
-    {
-        Result::Err(err) => {
-            match err {
-                twim::Error::TxBufferTooLong => error!("\tTxBufferTooLong\n"),
-                twim::Error::RxBufferTooLong => error!("\tRxBufferTooLong\n"),
-                twim::Error::Transmit => error!("\tTransmit\n"),
-                twim::Error::Receive => error!("\tReceive\n"),
-                twim::Error::DMABufferNotInDataMemory => error!("\tDMABufferNotInDataMemory\n"),
-            }
-        },
-        Result::Ok(_) => info!("HRS3300 usage successful!")
-    }
+    try_scan_display(&mut sensor, &mut display_wrapper, &mut delay_provider).expect("trying scan and display");    
 
     loop {
         asm::wfi();
     }
 }
 
-fn try_hrs3300<D> (
-        sensor: &mut hrs3300::I2cDriver, 
-        delay_provider: &mut delay::TimerDelay<D>
-    ) 
--> Result<(), twim::Error>
-where
-    D:  timer::Instance
+#[no_mangle]
+fn try_scan_display(
+    sensor: &mut hrs3300::Sensor, 
+    display: &mut display::DisplayDriver, 
+    delay_provider: &mut SensorDelayProviderType
+)
+-> Result<(), core::convert::Infallible>
+{
+    // init sensor
+    sensor.init().unwrap();
+    sensor.set_hrs_active(true).unwrap();
+    sensor.set_osc_active(true).unwrap();
+
+    // init display
+    display.init().unwrap();
+    display.draw_backgound().unwrap();
+    display.draw_axes().unwrap();
+    display.count_sin();
+    display.draw_sin().unwrap();
+
+
+    // scan and draw samples
+    for _ in 0..1000 {
+        let raw_sample = sensor.read_raw_sample().unwrap();
+
+        GLOBAL_HRS.store(raw_sample.hrs, atomic::Ordering::Relaxed);
+        GLOBAL_ALS.store(raw_sample.als,  atomic::Ordering::Relaxed);
+        GLOBAL_SUM.store(raw_sample.get_sum(), atomic::Ordering::Relaxed);
+
+        display.clear_sin().unwrap();
+        display.rotate_sin();
+        display.draw_axes().unwrap();
+        display.draw_sin().unwrap();
+            
+        delay_provider.delay_us(sensor.get_adc_wait_time_us());
+    }
+
+    // turn off sensor
+    sensor.set_osc_active(false).unwrap();
+    sensor.set_hrs_active(false).unwrap();
+
+    // turn off display
+    display.display_driver.hard_reset().unwrap();
+
+    Ok(())
+}
+
+#[allow(unused)]
+fn try_hrs3300(sensor: &mut hrs3300::Sensor, delay_provider: &mut SensorDelayProviderType) 
+-> Result<(), hrs3300::SensorError>
 {       
     info!("HRS3300 usage starts");
 
@@ -118,18 +136,9 @@ where
     Ok(())
 }
 
-fn try_st7789<RST, SPI, DC, DELAY, E, T> (
-    display: &mut ST7789_wrapper::SPIDriver<RST, SPI, DC, DELAY>,
-    delay_provider: &mut delay::TimerDelay<T>
-)
--> Result<(), st7789::Error<SPI::Error, DC::Error, RST::Error>>
-where
-    SPI: spi::Write<u8>,
-    DC: OutputPin<Error = E>,
-    RST: OutputPin<Error = E>,
-    DELAY: DelayUs<u32>,
-    E: core::fmt::Debug,
-    T: timer::Instance
+#[allow(unused)]
+fn try_st7789(display: &mut display::DisplayDriver, delay_provider: &mut SensorDelayProviderType)
+-> Result<(), display::DisplayErrorType>
 {
     display.init()?;
     display.draw_backgound()?;
@@ -145,7 +154,7 @@ where
         delay_provider.delay_us(33_000);
     }
 
-    display.display_driver.hard_reset()?;
+    display.display_driver.hard_reset().unwrap();
     
     Ok(())
 }
