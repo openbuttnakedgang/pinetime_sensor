@@ -51,7 +51,8 @@ fn main() -> ! {
         mut delay_provider
     } = init::Components::new();
 
-    try_scan_display(&mut sensor, &mut display_wrapper, &mut delay_provider).expect("trying scan and display");    
+    // try_scan_display(&mut sensor, &mut display_wrapper, &mut delay_provider).expect("trying scan and display");    
+    try_hrs3300(&mut sensor, &mut delay_provider).unwrap();
 
     loop {
         asm::wfi();
@@ -78,22 +79,38 @@ fn try_scan_display(
     display.count_sin();
     display.draw_sin().unwrap();
 
+    println!("start");
+    let mut samples = 0_u32;    
+    let mut display_updates = 0_u32;    
 
+    let mut time_us = 0_u64;
+    let sensor_update_time = 12_000_u64; // value < 0.1 ms
+    let display_update_time = 432_000_u64; // 432 ms
     // scan and draw samples
-    for _ in 0..1000 {
-        let raw_sample = sensor.read_raw_sample().unwrap();
+    for _ in 0..1_000_000_u64 {
+        delay_provider.delay_us(1000_u32);
+        time_us += 1000_u64;
 
-        GLOBAL_HRS.store(raw_sample.hrs, atomic::Ordering::Relaxed);
-        GLOBAL_ALS.store(raw_sample.als,  atomic::Ordering::Relaxed);
-        GLOBAL_SUM.store(raw_sample.get_sum(), atomic::Ordering::Relaxed);
+        if time_us % display_update_time == 0 {
+            display.update().unwrap();
 
-        display.clear_sin().unwrap();
-        display.rotate_sin();
-        display.draw_axes().unwrap();
-        display.draw_sin().unwrap();
+            time_us += display_update_time;
+            display_updates += 1;
+        } else if time_us % sensor_update_time == 0 {        
+            let raw_sample = sensor.read_raw_sample().unwrap();
+
+            GLOBAL_HRS.store(raw_sample.hrs, atomic::Ordering::Relaxed);
+            GLOBAL_ALS.store(raw_sample.als,  atomic::Ordering::Relaxed);
+            GLOBAL_SUM.store(raw_sample.get_sum(), atomic::Ordering::Relaxed);
             
-        delay_provider.delay_us(sensor.get_adc_wait_time_us());
+            samples += 1;
+            println!("samples: {}, display: {}", samples, display_updates);
+        } 
     }
+
+    GLOBAL_HRS.store(0, atomic::Ordering::Relaxed);
+    GLOBAL_ALS.store(0,  atomic::Ordering::Relaxed);
+    GLOBAL_SUM.store(0, atomic::Ordering::Relaxed);
 
     // turn off sensor
     sensor.set_osc_active(false).unwrap();

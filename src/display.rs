@@ -49,6 +49,15 @@ impl DisplayDriver {
         Ok(())
     }
 
+    pub fn update(&mut self) -> Result<(), DisplayErrorType> {
+        self.clear_sin()?;
+        self.rotate_sin();
+        self.draw_axes()?;
+        self.draw_sin()?;
+        
+        Ok(())
+    }
+
     #[allow(unused)]
     pub fn draw_text(&mut self) -> Result<(), DisplayErrorType> {
         // Draw something onto the LCD
