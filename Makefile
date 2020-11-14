@@ -1,10 +1,12 @@
 	
+OPT = -Z build-std
+
 dev:
-	cargo build
+	cargo build $(OPT)
 
 o:
 	Ozone $(CURDIR)/scripts/conf_dev.jdebug &
 
 check c:
-	cargo check
+	cargo check $(OPT)
 

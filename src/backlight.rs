@@ -45,7 +45,7 @@ impl Backlight {
         if brightness > 7 {
             brightness = 7;
         }
-        info!("Setting backlight brightness to {}", brightness);
+        log::info!("Setting backlight brightness to {}", brightness);
         if brightness & 0x01 > 0 {
             self.low.set_low().unwrap();
         } else {
